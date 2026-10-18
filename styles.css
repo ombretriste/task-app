@@ -712,3 +712,9 @@ main {
 .tone-head svg { color: var(--accent); }
 .tone-pills { display: flex; flex-wrap: wrap; gap: 6px; }
 .tone-opt small { font-size: 12px; color: var(--muted); }
+
+/* iPhone (pantalla completa): iOS difumina una franja justo debajo de la barra de estado (hora,
+   batería). Se baja la barra superior para que el título y los iconos queden fuera. */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .topbar { padding-top: calc(env(safe-area-inset-top) + 14px); }
+}
