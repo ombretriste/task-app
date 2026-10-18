@@ -2,7 +2,7 @@
 
 *by OmT Finance*
 
-Versión **0.1.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
+Versión **0.1.1** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
 
 App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prioridad, ordenadas por prioridad, con un tic de «hecha» y avisos que se repiten más a menudo cuanto más urgente es la tarea.
 
@@ -39,7 +39,7 @@ Sin servidor, la app avisa solo mientras está abierta. En iPhone/iPad los aviso
 
 1. Importa el repositorio en [Vercel](https://vercel.com/new) con el preset **Other** (sin comando de compilación).
 2. En el proyecto de Vercel → **Storage**, conecta la base de datos **Upstash Redis** (puede ser la misma de UnderCTRL y PayCTRL: aquí todas las claves empiezan por `tsk:`). Vuelve a desplegar.
-3. Comprueba abriendo `https://<tu-app>.vercel.app/api/push`: debe decir `"configured": true`.
+3. Comprueba abriendo `https://<tu-app>.vercel.app/api/push`: debe decir `"configured": true`. Si dice `false`, la lista `vars` muestra qué variables de base de datos ve el servidor (solo nombres). Sirve cualquier par `…REST_API_URL` / `…REST_API_TOKEN`, tenga el prefijo que tenga. Tras conectar la base hay que volver a desplegar (Deployments → ⋯ → Redeploy).
 4. Crea un cron gratuito en [cron-job.org](https://cron-job.org) que abra `https://<tu-app>.vercel.app/api/push?run` cada 5 minutos. (El cron de Vercel en el plan gratuito solo permite una vez al día.)
 
 Las claves VAPID se generan solas la primera vez y se guardan en Redis (`tsk:vapid`).

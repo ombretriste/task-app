@@ -5,7 +5,7 @@
 // (guardadas en el dispositivo) y compone la notificación. Por eso no hace falta cifrar contenido:
 // solo la firma VAPID (ES256), que se hace con WebCrypto.
 //
-//   GET  /api/push                      -> { configured, devices }  (comprobación)
+//   GET  /api/push                      -> { configured, devices } | { configured: false, vars }  (comprobación)
 //   GET  /api/push?run                  -> envía los avisos pendientes (lo llama un cron cada 5 min)
 //   POST /api/push { action: 'key' }    -> { publicKey }  (clave VAPID pública)
 //   POST /api/push { action: 'subscribe', device, sub }    -> { ok }
@@ -120,13 +120,19 @@ async function runDue(subject) {
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const subject = `https://${req.headers.host || 'taskctrl.vercel.app'}`;
+  // Comprobación: qué variables de base de datos ve el servidor (solo los nombres, nunca sus valores)
+  const vars = Object.keys(process.env).filter((k) => /KV|REDIS|UPSTASH|REST_API/.test(k)).sort();
   if (!REDIS_URL || !REDIS_TOKEN) {
-    return res.status(req.method === 'GET' ? 200 : 503).json({ configured: false, error: 'not-configured' });
+    return res.status(req.method === 'GET' ? 200 : 503).json({ configured: false, error: 'not-configured', vars });
   }
   if (req.method === 'GET') {
     const q = req.query || Object.fromEntries(new URL(req.url, 'http://x').searchParams);
     if ('run' in q) return res.status(200).json({ ok: true, ...(await runDue(subject)) });
-    return res.status(200).json({ configured: true, devices: Number(await redis('SCARD', 'tsk:devs')) || 0 });
+    try {
+      return res.status(200).json({ configured: true, devices: Number(await redis('SCARD', 'tsk:devs')) || 0 });
+    } catch (err) {
+      return res.status(200).json({ configured: false, error: `redis: ${err.message}`, vars });
+    }
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'method' });
 
