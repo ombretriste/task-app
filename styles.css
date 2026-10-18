@@ -683,3 +683,6 @@ main {
 .swipe.armed .swipe-act { background: #22c55e; }
 .swipe.armed .swipe-act.undo { background: var(--accent); }
 .swipe .task { transition: opacity .35s ease, transform .25s ease; }
+
+/* Nube */
+.form-error { min-height: 18px; color: var(--danger); font-size: 13px; }

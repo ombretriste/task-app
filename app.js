@@ -1,11 +1,13 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 const STORAGE_KEY = 'taskctrl:v1';
 const DISPLAY_KEY = 'taskctrl:display';
 const INSTALL_HINT_KEY = 'taskctrl:installHint';
+const SYNC_KEY = 'taskctrl:sync';
 const KEEP_DONE_DAYS = 30; // las tareas hechas se borran solas pasado un mes
+const KEEP_DELETED_DAYS = 90; // cuánto se recuerda un borrado (para que la nube no lo resucite)
 
 const ICONS = {
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
@@ -22,6 +24,9 @@ const ICONS = {
   download: '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M4 17v1.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V17"/>',
   upload: '<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 17v1.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V17"/>',
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
+  cloud: '<path d="M7 18a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/><path d="M12 11v5M9.5 13.5L12 11l2.5 2.5"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+  logout: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
 };
 const icon = (name, size = 22, sw = 1.4) =>
   `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -101,12 +106,13 @@ function dueLabel(due) {
 }
 
 // ---------- Datos ----------
-// localStorage `taskctrl:v1` = { tasks: [{ id, title, prio 0–4, due 'YYYY-MM-DD'|'', notes, done, doneAt, created }],
-//                                settings: { on, morning 'HH:MM', end (hora) }, upd }
+// localStorage `taskctrl:v1` = { tasks: [{ id, title, prio 0–4, due 'YYYY-MM-DD'|'', notes, done, doneAt, created, upd }],
+//                                deleted: { id: cuándo se borró }, settings: { on, morning 'HH:MM', end (hora) }, upd }
+// `upd` de cada tarea y `deleted` sirven para fusionar con la nube tarea a tarea (gana el cambio más reciente).
 // Se copia también en IndexedDB para que el service worker pueda componer los avisos.
 
 function cleanData(d) {
-  const out = { tasks: [], settings: { ...DEFAULT_SETTINGS }, upd: 0 };
+  const out = { tasks: [], deleted: {}, settings: { ...DEFAULT_SETTINGS }, upd: 0 };
   if (!d || typeof d !== 'object') return out;
   const limit = Date.now() - KEEP_DONE_DAYS * 864e5;
   for (const t of Array.isArray(d.tasks) ? d.tasks : []) {
@@ -121,8 +127,11 @@ function cleanData(d) {
       done: !!t.done,
       doneAt: Number(t.doneAt) || 0,
       created: Number(t.created) || Date.now(),
+      upd: Number(t.upd) || Number(t.created) || 0,
     });
   }
+  const delLimit = Date.now() - KEEP_DELETED_DAYS * 864e5;
+  for (const [id, at] of Object.entries(d.deleted || {})) if (Number(at) > delLimit) out.deleted[id] = Number(at);
   const s = d.settings || {};
   out.settings.on = !!s.on;
   if (/^\d{2}:\d{2}$/.test(s.morning || '')) out.settings.morning = s.morning;
@@ -135,14 +144,41 @@ let data = cleanData(load(STORAGE_KEY, null));
 let meta = {}; // { device, subscribed, lastSlot } — en IndexedDB, compartido con el service worker
 let showDone = false;
 
-let syncTimer;
-function persist() {
+// Foto de cada tarea tal y como se guardó por última vez: al guardar, las que han cambiado reciben
+// un `upd` nuevo y las que faltan quedan apuntadas como borradas. Así no hay que acordarse de
+// marcarlo en cada sitio que modifica tareas.
+let snap = new Map();
+const taskSig = ({ upd, ...rest }) => JSON.stringify(rest);
+function resetSnap() {
+  snap = new Map(data.tasks.map((t) => [t.id, taskSig(t)]));
+}
+function stampChanges() {
+  const now = Date.now();
+  const seen = new Set();
+  for (const t of data.tasks) {
+    seen.add(t.id);
+    const sig = taskSig(t);
+    if (snap.get(t.id) !== sig) { t.upd = now; snap.set(t.id, sig); delete data.deleted[t.id]; }
+  }
+  for (const id of [...snap.keys()]) if (!seen.has(id)) { snap.delete(id); data.deleted[id] = now; }
+}
+resetSnap();
+
+let scheduleTimer;
+// Guarda en el dispositivo (y en IndexedDB para el service worker) y reprograma los avisos
+function store() {
   data.upd = Date.now();
   save(STORAGE_KEY, data);
   kvSet('state', data).catch(() => {});
-  clearTimeout(syncTimer);
-  syncTimer = setTimeout(refreshSchedule, 1200);
+  clearTimeout(scheduleTimer);
+  scheduleTimer = setTimeout(refreshSchedule, 1200);
   armLocalTimer();
+}
+// Tras un cambio hecho aquí: marca lo cambiado, guarda y lo sube a la nube
+function persist() {
+  stampChanges();
+  store();
+  queueSync();
 }
 
 // Si el service worker cambió algo (p. ej. «Hecho» desde la notificación), manda su copia
@@ -152,7 +188,9 @@ async function adoptIDBState() {
     if (s && (s.upd || 0) > (data.upd || 0)) {
       data = cleanData(s);
       save(STORAGE_KEY, data);
+      resetSnap();
       render();
+      queueSync();
     } else {
       await kvSet('state', data);
     }
@@ -655,10 +693,252 @@ $('import-input').addEventListener('change', async (e) => {
   }
 });
 
+// ---------- Sincronización en la nube ----------
+// Igual que en UnderCTRL y PayCTRL: cuenta con usuario y contraseña (crearla pide la misma clave de
+// registro) y cifrado de extremo a extremo: las tareas se cifran aquí (PBKDF2 + AES-256-GCM) antes
+// de subirse; el servidor solo guarda un bloque ilegible. Las claves derivan con sal propia
+// («taskctrl-…»): mismo usuario que en las otras apps, cuenta distinta.
+// En vez de elegir entre «nube» o «dispositivo», se fusiona tarea a tarea: gana el cambio más
+// reciente de cada una y los borrados se respetan. Los avisos y su horario son de cada dispositivo.
+const SYNC_API = 'api/sync';
+const SYNC_EVERY_MS = 3 * 60 * 1000; // sincronización periódica mientras la app está abierta
+const PBKDF2_ITERATIONS = 310000;
+const utf8 = new TextEncoder();
+
+let sync = load(SYNC_KEY, null); // { username, user, auth, key, at }
+const saveSync = () => { if (sync) save(SYNC_KEY, sync); else { try { localStorage.removeItem(SYNC_KEY); } catch (_) {} } };
+let pushTimer = null;
+let syncBusy = false;
+let syncAgain = false;
+let syncError = '';
+
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+const sha256hex = async (text) => hex(await crypto.subtle.digest('SHA-256', utf8.encode(text)));
+const toB64 = (buf) => {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+const fromB64 = (str) => Uint8Array.from(atob(str), (ch) => ch.charCodeAt(0));
+
+async function deriveAccount(username, password) {
+  const u = username.trim().toLowerCase();
+  const base = await crypto.subtle.importKey('raw', utf8.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = (salt) => crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: utf8.encode(salt), iterations: PBKDF2_ITERATIONS }, base, 256);
+  // Dos claves independientes: una para identificarse y otra (que nunca sale de aquí) para cifrar.
+  const [auth, key] = await Promise.all([bits(`taskctrl-auth:${u}`), bits(`taskctrl-enc:${u}`)]);
+  return { username: u, user: await sha256hex(`taskctrl-user:${u}`), auth: hex(auth), key: toB64(key) };
+}
+
+const aesKey = (account) => crypto.subtle.importKey('raw', fromB64(account.key), 'AES-GCM', false, ['encrypt', 'decrypt']);
+async function encryptData(obj, account = sync) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(account), utf8.encode(JSON.stringify(obj)));
+  return `${toB64(iv)}.${toB64(ct)}`;
+}
+async function decryptData(blob, account = sync) {
+  const [iv, ct] = blob.split('.');
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(iv) }, await aesKey(account), fromB64(ct));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+async function syncCall(action, extra = {}, account = sync) {
+  const body = JSON.stringify({ action, user: account.user, auth: account.auth, ...extra });
+  const res = await fetch(SYNC_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    // Al salir de la app, que la subida termine aunque se cierre (Safari lo limita a 64 KB).
+    keepalive: document.hidden && body.length < 60000,
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(out.error || `http ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return out;
+}
+
+const syncErrorText = (err) => ({
+  auth: 'Usuario o contraseña incorrectos.',
+  exists: 'Ese nombre de usuario ya existe. Elige otro o entra con tu cuenta.',
+  'too-many': 'Demasiados intentos. Espera 15 minutos.',
+  invite: 'La clave de registro no es correcta.',
+  'not-configured': 'Falta conectar la base de datos en Vercel (Storage → Upstash Redis).',
+  OperationError: 'No se han podido descifrar los datos de la nube.',
+}[err.message || err.name] || 'No se pudo conectar con la nube. Se reintentará.');
+
+// Fusión tarea a tarea: de cada tarea, la versión con el `upd` más reciente; un borrado gana si
+// es posterior al último cambio de la tarea.
+function mergeTasks(a, b) {
+  const deleted = { ...(a.deleted || {}) };
+  for (const [id, at] of Object.entries(b.deleted || {})) if (!(deleted[id] >= at)) deleted[id] = at;
+  const byId = new Map();
+  for (const t of [...(a.tasks || []), ...(b.tasks || [])]) {
+    const cur = byId.get(t.id);
+    if (!cur || (t.upd || 0) > (cur.upd || 0)) byId.set(t.id, t);
+  }
+  const tasks = [...byId.values()].filter((t) => !(deleted[t.id] >= (t.upd || 0)));
+  return { tasks, deleted };
+}
+// Forma comparable (sin orden) de lo que se sincroniza
+const syncSig = (x) => JSON.stringify([
+  (x.tasks || []).slice().sort((p, q) => (p.id < q.id ? -1 : 1)),
+  Object.entries(x.deleted || {}).sort(),
+]);
+
+// Hay cambios locales: se suben en unos segundos (se agrupan)
+function queueSync() {
+  if (!sync) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => syncNow(), 1500);
+}
+
+async function syncNow({ interactive = false } = {}) {
+  if (!sync) return false;
+  if (syncBusy) { syncAgain = true; return false; }
+  syncBusy = true;
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const remote = await syncCall('pull');
+      const cloud = remote.blob ? cleanData(await decryptData(remote.blob)) : { tasks: [], deleted: {} };
+      const merged = mergeTasks(data, cloud);
+      // Lo nuevo de la nube se aplica aquí (sin marcarlo como cambio local)
+      if (syncSig(merged) !== syncSig(data)) {
+        data = cleanData({ ...data, ...merged });
+        resetSnap();
+        store();
+        render();
+      }
+      // Y lo nuevo de aquí se sube
+      const mine = { tasks: data.tasks, deleted: data.deleted };
+      if (remote.blob && syncSig(mine) === syncSig(cloud)) break;
+      try {
+        await syncCall('push', { blob: await encryptData(mine), baseRev: remote.rev });
+        break;
+      } catch (err) {
+        if (err.status !== 409) throw err; // otro dispositivo subió justo antes: se vuelve a fusionar
+      }
+    }
+    sync.at = Date.now();
+    syncError = '';
+    saveSync();
+    return true;
+  } catch (err) {
+    console.warn(err);
+    syncError = syncErrorText(err);
+    if (interactive) toast(syncError);
+    return false;
+  } finally {
+    syncBusy = false;
+    if (syncAgain) { syncAgain = false; queueSync(); }
+  }
+}
+
+function syncStatusText() {
+  if (!sync) return 'Desactivada';
+  if (syncError) return syncError;
+  if (!sync.at) return 'Pendiente';
+  const mins = Math.round((Date.now() - sync.at) / 60000);
+  return `Al día · ${mins < 1 ? 'hace un momento' : mins < 60 ? `hace ${mins} min` : new Date(sync.at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}`;
+}
+
+function openSyncSheet() {
+  const sheet = openSheet('tall', 'Sincronización en la nube');
+  const head = `
+    <div class="sheet-head">
+      <h2 class="sheet-title">Sincronización en la nube</h2>
+      <button type="button" class="icon-btn sm" data-close aria-label="Cerrar">${icon('close', 18)}</button>
+    </div>`;
+
+  const renderConnected = () => {
+    sheet.innerHTML = `${head}
+      <div class="notif-status ${syncError ? 'bad' : 'ok'}">${icon('cloud', 22)}<span><b>Conectado como ${esc(sync.username)}</b><small class="s-status">${esc(syncStatusText())}</small></span></div>
+      <p class="muted small">Tus tareas se cifran en este dispositivo antes de subirse. Entra con el mismo usuario y contraseña en tu otro móvil, tablet u ordenador para tenerlas también allí. Si cambias algo en dos sitios a la vez, se juntan los cambios: no se pierde nada.</p>
+      <p class="muted small">Los avisos se activan en cada dispositivo por separado (⋯ → Avisos), por si no quieres que suenen en todos.</p>
+      <div class="row-btns">
+        <button type="button" class="done-btn" data-now>${icon('refresh', 17)} Sincronizar ahora</button>
+        <button type="button" class="ghost-btn danger" data-logout>${icon('logout', 17)} Desconectar</button>
+      </div>`;
+  };
+
+  const renderForm = (mode = 'login') => {
+    sheet.innerHTML = `${head}
+      <p class="muted small">Para tener tus tareas en varios dispositivos. Se cifran aquí con tu contraseña antes de subirse: nadie más puede leerlas, ni siquiera el servidor. <b>Si olvidas la contraseña no se pueden recuperar.</b></p>
+      <div class="seg" role="group" aria-label="Cuenta">
+        <button type="button" data-mode="login" class="${mode === 'login' ? 'on' : ''}">Ya tengo cuenta</button>
+        <button type="button" data-mode="create" class="${mode === 'create' ? 'on' : ''}">Crear cuenta</button>
+      </div>
+      <label class="fld"><span>Usuario</span><input id="s-user" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="40" /></label>
+      <label class="fld"><span>Contraseña</span><input id="s-pass" type="password" autocomplete="${mode === 'create' ? 'new-password' : 'current-password'}" maxlength="128" /></label>
+      ${mode === 'create' ? `
+      <label class="fld"><span>Repite la contraseña</span><input id="s-pass2" type="password" autocomplete="new-password" maxlength="128" /></label>
+      <label class="fld"><span>Clave de registro</span><input id="s-invite" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="La misma que en UnderCTRL" /></label>` : ''}
+      <p class="form-error" id="s-error" role="alert"></p>
+      <div class="body-actions"><button type="button" class="done-btn" id="s-go">${mode === 'create' ? 'Crear cuenta' : 'Entrar'}</button></div>`;
+    const q = (sel) => sheet.querySelector(sel);
+    q('#s-go').addEventListener('click', async () => {
+      const err = q('#s-error');
+      const username = q('#s-user').value.trim();
+      const password = q('#s-pass').value;
+      if (username.length < 3) return void (err.textContent = 'El usuario debe tener al menos 3 caracteres.');
+      if (password.length < 8) return void (err.textContent = 'La contraseña debe tener al menos 8 caracteres.');
+      if (mode === 'create' && password !== q('#s-pass2').value) return void (err.textContent = 'Las contraseñas no coinciden.');
+      if (mode === 'create' && !q('#s-invite').value.trim()) return void (err.textContent = 'Introduce la clave de registro.');
+      const btn = q('#s-go');
+      btn.disabled = true;
+      btn.textContent = 'Un momento…';
+      err.textContent = '';
+      try {
+        const account = await deriveAccount(username, password);
+        if (mode === 'create') await syncCall('register', { invite: q('#s-invite').value.trim() }, account);
+        else await syncCall('pull', {}, account); // comprueba usuario y contraseña
+        sync = { ...account, at: null };
+        saveSync();
+        const ok = await syncNow({ interactive: true });
+        if (ok) toast(mode === 'create' ? 'Cuenta creada. Tus tareas ya están en la nube' : 'Conectado. Tareas sincronizadas');
+        renderConnected();
+      } catch (e) {
+        console.warn(e);
+        err.textContent = syncErrorText(e);
+        btn.disabled = false;
+        btn.textContent = mode === 'create' ? 'Crear cuenta' : 'Entrar';
+      }
+    });
+    q('#s-user').focus();
+  };
+
+  sheet.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-close]')) return closeSheet();
+    const m = e.target.closest('[data-mode]');
+    if (m) return renderForm(m.dataset.mode);
+    if (e.target.closest('[data-now]')) {
+      sheet.querySelector('.s-status').textContent = 'Sincronizando…';
+      await syncNow({ interactive: true });
+      renderConnected();
+    }
+    if (e.target.closest('[data-logout]')) {
+      if (!confirm('¿Desconectar este dispositivo? Las tareas se quedan en él, pero dejarán de sincronizarse.')) return;
+      sync = null;
+      saveSync();
+      renderForm();
+      toast('Sincronización desactivada en este dispositivo');
+    }
+  });
+  if (sync) renderConnected();
+  else renderForm();
+}
+
+// Mientras la app está abierta, trae cada poco lo cambiado en otros dispositivos
+setInterval(() => { if (!document.hidden) syncNow(); }, SYNC_EVERY_MS);
+
 // ---------- Menú ⋯ ----------
 
 const MENU = [
   { label: 'Avisos', icon: 'bell', run: () => openNotifSheet() },
+  { label: 'Sincronización en la nube', icon: 'cloud', run: () => openSyncSheet() },
   { label: 'Opciones de visualización', icon: 'palette', run: () => openDisplaySheet() },
   { label: 'Exportar copia', icon: 'download', run: () => exportBackup() },
   { label: 'Importar copia', icon: 'upload', run: () => $('import-input').click() },
@@ -852,7 +1132,7 @@ render();
 // La fecha cambia a medianoche y con la app en segundo plano: se repinta al volver
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  adoptIDBState().then(render);
+  adoptIDBState().then(() => { render(); syncNow(); });
   refreshSchedule();
 });
 
@@ -864,6 +1144,7 @@ if ('serviceWorker' in navigator) {
 (async () => {
   try { meta = (await kvGet('meta')) || {}; } catch (_) { meta = {}; }
   await adoptIDBState();
+  syncNow();
   // Si el permiso sigue concedido, renueva la suscripción y las horas de los próximos días
   if (data.settings.on && canPush() && Notification.permission === 'granted') {
     if (meta.subscribed) refreshSchedule();

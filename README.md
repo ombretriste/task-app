@@ -2,7 +2,7 @@
 
 *by OmT Finance*
 
-Versión **0.2.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
+Versión **0.3.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
 
 App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prioridad, ordenadas por prioridad, con un tic de «hecha» y avisos que se repiten más a menudo cuanto más urgente es la tarea.
 
@@ -21,9 +21,10 @@ App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prio
   
   El día que vence una tarea, y si ya está vencida, sube un nivel.
 - **Avisos** (menú ⋯ → Avisos): resumen cada mañana a la hora elegida (08:30 por defecto) y recordatorios durante el día hasta la hora de corte (22:00 por defecto). En Android, la notificación de una sola tarea tiene el botón «✓ Hecho».
-- Menú ⋯: Avisos, Opciones de visualización (oscuro/claro/automático y cuatro fondos: Fucsia, Noche, Menta y Glaciar), Exportar copia e Importar copia.
+- **Sincronización en la nube** (menú ⋯): cuenta con usuario y contraseña (crearla pide la misma clave de registro que UnderCTRL y PayCTRL) para tener las tareas en varios dispositivos. Se cifran en el dispositivo (PBKDF2 + AES-256-GCM) antes de subirse a `api/sync`; el servidor solo guarda un bloque ilegible. Si se cambian cosas en dos dispositivos a la vez se fusionan tarea a tarea (gana el cambio más reciente de cada una y los borrados se respetan). Los avisos y su horario se configuran en cada dispositivo.
+- Menú ⋯: Avisos, Sincronización en la nube, Opciones de visualización (oscuro/claro/automático y cuatro fondos: Fucsia, Noche, Menta y Glaciar), Exportar copia e Importar copia.
 
-Las tareas se guardan solo en el propio dispositivo (`localStorage` `taskctrl:v1`, con una copia en IndexedDB `taskctrl` para el service worker).
+Las tareas se guardan en el propio dispositivo (`localStorage` `taskctrl:v1`, con una copia en IndexedDB `taskctrl` para el service worker) y, si se activa, en la nube cifradas (`tsk:acct:*` en Upstash).
 
 ## Cómo funcionan los avisos
 
