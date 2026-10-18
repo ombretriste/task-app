@@ -3,26 +3,122 @@
 // Sin DOM: el service worker lo carga con importScripts.
 'use strict';
 
-// Escala de prioridad, de la más alta (4) a la más baja (0).
+// Escala de prioridad, de la más alta (4) a la más baja (0). Los nombres dependen del tono (TONES).
 // `every`: minutos entre avisos dentro del horario; `daily`: un aviso al día por la tarde.
 const PRIOS = [
-  { lvl: 4, name: "Pa' ayer, bro", hint: 'Urgente de verdad', freq: 'Aviso cada hora', dot: '🔴', every: 60 },
-  { lvl: 3, name: 'No olvides esto, bro', hint: 'Importante', freq: 'Aviso cada 3 horas', dot: '🟠', every: 180 },
-  { lvl: 2, name: 'Que no se te pase', hint: 'Tenlo en el radar', freq: 'Aviso cada 6 horas', dot: '🟡', every: 360 },
-  { lvl: 1, name: 'Tranqui, sin agobios', hint: 'Cuando puedas', freq: 'Un aviso al día', dot: '🟢', daily: true },
-  { lvl: 0, name: 'Si eso, ya tal', hint: 'Algún día', freq: 'Solo en el resumen de la mañana', dot: '🔵' },
+  { lvl: 4, freq: 'Aviso cada hora', dot: '🔴', every: 60 },
+  { lvl: 3, freq: 'Aviso cada 3 horas', dot: '🟠', every: 180 },
+  { lvl: 2, freq: 'Aviso cada 6 horas', dot: '🟡', every: 360 },
+  { lvl: 1, freq: 'Un aviso al día', dot: '🟢', daily: true },
+  { lvl: 0, freq: 'Solo en el resumen de la mañana', dot: '🔵' },
 ];
 const PRIO = (lvl) => PRIOS[4 - lvl];
-const DEFAULT_SETTINGS = { on: false, morning: '08:30', end: 22 };
+
+// Tono del lenguaje (menú ⋯ → Tono del lenguaje). `prios`: [nombre, explicación] de la 4 a la 0.
+const TONES = {
+  calle: {
+    label: 'De la calle',
+    sample: "«Pa' ayer, bro»",
+    prios: [["Pa' ayer, bro", 'Urgente de verdad'], ['No olvides esto, bro', 'Importante'], ['Que no se te pase', 'Tenlo en el radar'], ['Tranqui, sin agobios', 'Cuando puedas'], ['Si eso, ya tal', 'Algún día']],
+    things: (n) => (n === 1 ? 'cosa pendiente' : 'cosas pendientes'),
+    doneMsgs: ['¡Hecho, máquina!', 'Uno menos, crack', 'Fuera de la lista 💪', 'Eso es, bro', 'Tachada. Así se hace'],
+    added: 'Apuntada',
+    addedTop: 'Apuntada. Esta no se te escapa 🔥',
+    allDone: 'Todo hecho, máquina.<br>Nada pendiente.',
+    noTasks: 'Aún no hay tareas.<br>Empieza cuando quieras.',
+    emptyTitle: 'Nada por aquí, bro',
+    emptyText: 'Apunta lo que tengas pendiente, ponle prioridad y fecha, y yo me encargo de recordártelo.',
+    cta: 'Activa los avisos para que no se te pase nada',
+    placeholder: '¿Qué tienes que hacer?',
+    noPerm: 'Sin permiso no puedo avisarte, bro.',
+    morning: 'Buenos días ☀️',
+    nothing: 'Nada pendiente. Hoy vas sobrado, crack.',
+    many: (n) => `${n} cosas que no puedes olvidar`,
+    back: (when) => `¡Hecho! Vuelve el ${when}`,
+  },
+  estandar: {
+    label: 'Estándar',
+    sample: '«Urgente»',
+    prios: [['Urgente', 'Hay que hacerlo ya'], ['Importante', 'No lo dejes pasar'], ['Normal', 'Tenlo presente'], ['Cuando puedas', 'Sin prisa'], ['Algún día', 'Sin plazo concreto']],
+    things: (n) => (n === 1 ? 'tarea pendiente' : 'tareas pendientes'),
+    doneMsgs: ['Tarea completada', '¡Bien hecho!', 'Hecho'],
+    added: 'Tarea añadida',
+    addedTop: 'Tarea añadida',
+    allDone: 'Todo hecho.<br>Nada pendiente.',
+    noTasks: 'Aún no hay tareas.<br>Empieza cuando quieras.',
+    emptyTitle: 'No hay tareas',
+    emptyText: 'Añade lo que tengas pendiente con su prioridad y fecha límite, y te lo recordaré.',
+    cta: 'Activa los avisos para recibir recordatorios',
+    placeholder: '¿Qué tienes que hacer?',
+    noPerm: 'Sin permiso no puedo enviarte avisos.',
+    morning: 'Buenos días',
+    nothing: 'No tienes tareas pendientes.',
+    many: (n) => `${n} tareas pendientes`,
+    back: (when) => `Tarea completada. Vuelve el ${when}`,
+  },
+  formal: {
+    label: 'Formal',
+    sample: '«Prioridad máxima»',
+    prios: [['Prioridad máxima', 'Requiere atención inmediata'], ['Prioridad alta', 'Requiere atención próxima'], ['Prioridad media', 'Atención ordinaria'], ['Prioridad baja', 'Puede posponerse'], ['Sin urgencia', 'Sin plazo definido']],
+    things: (n) => (n === 1 ? 'tarea pendiente' : 'tareas pendientes'),
+    doneMsgs: ['Tarea completada correctamente'],
+    added: 'Tarea registrada',
+    addedTop: 'Tarea registrada',
+    allDone: 'No tiene tareas pendientes.',
+    noTasks: 'Aún no ha registrado ninguna tarea.',
+    emptyTitle: 'No hay tareas registradas',
+    emptyText: 'Añada sus tareas pendientes indicando la prioridad y la fecha límite; se le recordarán oportunamente.',
+    cta: 'Active los avisos para recibir recordatorios',
+    placeholder: 'Descripción de la tarea',
+    noPerm: 'Sin permiso no es posible enviarle avisos.',
+    morning: 'Buenos días',
+    nothing: 'No tiene tareas pendientes.',
+    many: (n) => `${n} tareas requieren su atención`,
+    back: (when) => `Tarea completada. Próxima fecha: ${when}`,
+  },
+};
+const toneOf = (state) => TONES[state && state.settings && state.settings.tone] || TONES.calle;
+const prioName = (lvl, tone) => tone.prios[4 - lvl][0];
+const prioHint = (lvl, tone) => tone.prios[4 - lvl][1];
+
+const DEFAULT_SETTINGS = { on: false, morning: '08:30', end: 22, tone: 'calle' };
 const HORIZON_DAYS = 7;   // se programan los avisos de los próximos 7 días
 const MAX_SLOTS = 400;
 const DAILY_AFTER_H = 9;  // el aviso diario de «Tranqui» llega 9 h después del resumen
+const LEAD_OPTIONS = [7, 14, 30, 60]; // días de antelación con los que reaparece una tarea anual
+const DEFAULT_LEAD = 30;
 
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 function daysBetween(fromISO, toISO) {
   const [a, b, c] = fromISO.split('-').map(Number);
   const [x, y, z] = toISO.split('-').map(Number);
   return Math.round((Date.UTC(x, y - 1, z) - Date.UTC(a, b - 1, c)) / 864e5);
+}
+// La misma fecha un año después (el 29 de febrero pasa al 28)
+function nextYearISO(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const last = new Date(Date.UTC(y + 1, m, 0)).getUTCDate();
+  return `${y + 1}-${String(m).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+}
+
+// Una tarea anual «duerme» hasta que faltan `lead` días para su fecha: no sale en pendientes ni avisa
+const isDormant = (task, dayISO) => !!(task.repeat && task.due && daysBetween(dayISO, task.due) > (task.lead || DEFAULT_LEAD));
+const activeTasks = (state, dayISO) => ((state && state.tasks) || []).filter((t) => !t.done && !isDormant(t, dayISO));
+
+// Marca una tarea como hecha. Si se repite cada año no se cierra: pasa a su fecha del año siguiente
+// (la primera que quede en el futuro) y se queda dormida hasta que se acerque.
+function completeTask(task, now = Date.now()) {
+  task.upd = now;
+  if (task.repeat && task.due) {
+    const today = isoOf(new Date(now));
+    let next = nextYearISO(task.due);
+    while (next <= today) next = nextYearISO(next);
+    task.due = next;
+    return 'rolled';
+  }
+  task.done = true;
+  task.doneAt = now;
+  return 'done';
 }
 
 // Orden de la lista: prioridad, luego fecha límite (sin fecha al final), luego antigüedad
@@ -39,7 +135,6 @@ function effLevel(task, dayISO) {
 // Momentos de aviso entre `from` y `to` (ms): [{ t, kind: 'morning'|'remind', ids: [...] }]
 function computeSlots(state, from, to) {
   const s = { ...DEFAULT_SETTINGS, ...(state && state.settings) };
-  const pending = ((state && state.tasks) || []).filter((t) => !t.done);
   if (!s.on) return [];
   const [mh, mm] = String(s.morning).split(':').map(Number);
   const slots = new Map();
@@ -56,6 +151,7 @@ function computeSlots(state, from, to) {
     const morning = new Date(day.getFullYear(), day.getMonth(), day.getDate(), mh, mm).getTime();
     const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), s.end, 0).getTime();
     const dayISO = isoOf(day);
+    const pending = activeTasks(state, dayISO);
     // El resumen de la mañana sale siempre (aunque no haya nada: así se mantiene la cadena de avisos)
     add(morning, 'morning', pending.map((t) => t.id));
     for (const task of pending) {
@@ -85,17 +181,18 @@ function dueText(due, todayISO) {
 // Texto de la notificación de un momento de aviso (o el resumen si no hay ninguno)
 function buildNotification(slot, state, now = Date.now()) {
   const today = isoOf(new Date(now));
-  const pending = sortTasks(((state && state.tasks) || []).filter((t) => !t.done));
+  const tone = toneOf(state);
+  const pending = sortTasks(activeTasks(state, today));
   const line = (t) => `${PRIO(t.prio).dot} ${t.title}${t.due ? ` · ${dueText(t.due, today)}` : ''}`;
   const list = (arr) => arr.slice(0, 5).map(line).join('\n') + (arr.length > 5 ? `\n…y ${arr.length - 5} más` : '');
   if (!slot || slot.kind === 'morning') {
     const morning = !!slot;
     if (!pending.length) {
-      return { title: morning ? 'Buenos días ☀️' : 'TaskCTRL', body: 'Nada pendiente. Hoy vas sobrado, crack.', tag: 'taskctrl-summary', ids: [] };
+      return { title: morning ? tone.morning : 'TaskCTRL', body: tone.nothing, tag: 'taskctrl-summary', ids: [] };
     }
     const late = pending.filter((t) => t.due && t.due < today).length;
     return {
-      title: `${morning ? 'Buenos días ☀️ · ' : ''}${pending.length === 1 ? '1 cosa pendiente' : `${pending.length} cosas pendientes`}${late ? ` (${late} vencida${late > 1 ? 's' : ''})` : ''}`,
+      title: `${morning ? `${tone.morning} · ` : ''}${pending.length} ${tone.things(pending.length)}${late ? ` (${late} vencida${late > 1 ? 's' : ''})` : ''}`,
       body: list(pending),
       tag: 'taskctrl-summary',
       ids: [],
@@ -103,12 +200,12 @@ function buildNotification(slot, state, now = Date.now()) {
   }
   const tasks = sortTasks(slot.ids.map((id) => pending.find((t) => t.id === id)).filter(Boolean));
   if (!tasks.length) return null;
-  const top = PRIO(effLevel(tasks[0], today));
+  const top = effLevel(tasks[0], today);
   if (tasks.length === 1) {
     const t = tasks[0];
-    return { title: `${top.dot} ${top.name}`, body: t.title + (t.due ? ` — ${dueText(t.due, today)}` : ''), tag: 'taskctrl-remind', ids: [t.id] };
+    return { title: `${PRIO(top).dot} ${prioName(top, tone)}`, body: t.title + (t.due ? ` — ${dueText(t.due, today)}` : ''), tag: 'taskctrl-remind', ids: [t.id] };
   }
-  return { title: `${top.dot} ${tasks.length} cosas que no puedes olvidar`, body: list(tasks), tag: 'taskctrl-remind', ids: tasks.map((t) => t.id) };
+  return { title: `${PRIO(top).dot} ${tone.many(tasks.length)}`, body: list(tasks), tag: 'taskctrl-remind', ids: tasks.map((t) => t.id) };
 }
 
 // ---------- IndexedDB: copia del estado para el service worker ----------

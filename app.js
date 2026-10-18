@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const STORAGE_KEY = 'taskctrl:v1';
 const DISPLAY_KEY = 'taskctrl:display';
 const INSTALL_HINT_KEY = 'taskctrl:installHint';
@@ -26,6 +26,8 @@ const ICONS = {
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   cloud: '<path d="M7 18a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/><path d="M12 11v5M9.5 13.5L12 11l2.5 2.5"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+  repeat: '<path d="M17 3l3 3-3 3"/><path d="M4 11V9a3 3 0 0 1 3-3h13"/><path d="M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 0 1-3 3H4"/>',
+  chat: '<path d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 17h-8l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 5 5z"/><path d="M8 10h8M8 13h5"/>',
   logout: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
 };
 const icon = (name, size = 22, sw = 1.4) =>
@@ -106,8 +108,9 @@ function dueLabel(due) {
 }
 
 // ---------- Datos ----------
-// localStorage `taskctrl:v1` = { tasks: [{ id, title, prio 0–4, due 'YYYY-MM-DD'|'', notes, done, doneAt, created, upd }],
-//                                deleted: { id: cuándo se borró }, settings: { on, morning 'HH:MM', end (hora) }, upd }
+// localStorage `taskctrl:v1` = { tasks: [{ id, title, prio 0–4, due 'YYYY-MM-DD'|'', notes, repeat, lead, done, doneAt, created, upd }],
+//                                deleted: { id: cuándo se borró }, settings: { on, morning 'HH:MM', end (hora), tone }, upd }
+// `repeat`: se repite cada año; `lead`: días antes de la fecha en los que vuelve a aparecer.
 // `upd` de cada tarea y `deleted` sirven para fusionar con la nube tarea a tarea (gana el cambio más reciente).
 // Se copia también en IndexedDB para que el service worker pueda componer los avisos.
 
@@ -124,6 +127,8 @@ function cleanData(d) {
       prio: Math.max(0, Math.min(4, Math.round(Number(t.prio)) || 0)),
       due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || '') ? t.due : '',
       notes: String(t.notes || ''),
+      repeat: !!t.repeat,
+      lead: LEAD_OPTIONS.includes(Number(t.lead)) ? Number(t.lead) : DEFAULT_LEAD,
       done: !!t.done,
       doneAt: Number(t.doneAt) || 0,
       created: Number(t.created) || Date.now(),
@@ -136,6 +141,7 @@ function cleanData(d) {
   out.settings.on = !!s.on;
   if (/^\d{2}:\d{2}$/.test(s.morning || '')) out.settings.morning = s.morning;
   if (Number.isInteger(s.end) && s.end >= 12 && s.end <= 24) out.settings.end = s.end;
+  if (TONES[s.tone]) out.settings.tone = s.tone;
   out.upd = Number(d.upd) || 0;
   return out;
 }
@@ -197,7 +203,12 @@ async function adoptIDBState() {
   } catch (_) { /* sin IndexedDB */ }
 }
 
-const pendingTasks = () => sortTasks(data.tasks.filter((t) => !t.done));
+const pendingTasks = () => sortTasks(activeTasks(data, todayISO()));
+// Tareas anuales que esperan a que se acerque su próxima fecha
+const laterTasks = () => data.tasks.filter((t) => !t.done && isDormant(t, todayISO())).sort((a, b) => a.due.localeCompare(b.due));
+const TT = () => toneOf(data); // textos del tono elegido
+const fmtISO = (iso) => `${iso.slice(8)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+let showLater = false;
 
 // ---------- Render ----------
 
@@ -214,13 +225,13 @@ function renderSummary() {
   const forToday = pending.filter((t) => t.due === today).length;
   const notifOff = !data.settings.on || !('Notification' in window) || Notification.permission !== 'granted';
   const cta = notifOff
-    ? `<button type="button" class="notif-cta" data-notif>${icon('bell', 20)}<span>Activa los avisos para que no se te pase nada</span></button>`
+    ? `<button type="button" class="notif-cta" data-notif>${icon('bell', 20)}<span>${TT().cta}</span></button>`
     : '';
   if (!pending.length) {
     el.innerHTML = `
       <p class="label">Pendientes</p>
       <div class="big-stat"><span class="big-ok">${icon('check', 28, 1.6)}</span>
-        <span class="big-label">${data.tasks.length ? 'Todo hecho, máquina.<br>Nada pendiente.' : 'Aún no hay tareas.<br>Empieza cuando quieras.'}</span></div>
+        <span class="big-label">${data.tasks.length ? TT().allDone : TT().noTasks}</span></div>
       ${cta}`;
     return;
   }
@@ -230,10 +241,10 @@ function renderSummary() {
     <p class="label">Pendientes</p>
     <div class="big-stat">
       <span class="big-number">${pending.length}</span>
-      <span class="big-label">${pending.length === 1 ? 'cosa pendiente' : 'cosas pendientes'}${extra ? `<br>${extra}` : ''}</span>
+      <span class="big-label">${TT().things(pending.length)}${extra ? `<br>${extra}` : ''}</span>
     </div>
     <div class="prio-bar" aria-hidden="true">${counts.map((c) => `<i class="p${c.p.lvl}" style="flex:${c.n}"></i>`).join('')}</div>
-    <div class="prio-legend">${counts.map((c) => `<span class="p${c.p.lvl}">${c.n} · ${esc(c.p.name)}</span>`).join('')}</div>
+    <div class="prio-legend">${counts.map((c) => `<span class="p${c.p.lvl}">${c.n} · ${esc(prioName(c.p.lvl, TT()))}</span>`).join('')}</div>
     ${cta}`;
 }
 
@@ -241,6 +252,7 @@ function taskCard(t) {
   const due = dueLabel(t.due);
   const sub = [
     due && `<span class="due ${t.done ? '' : due.cls}">${icon('calendar', 13)}${esc(due.text)}</span>`,
+    t.repeat && `<span class="due">${icon('repeat', 13)}Cada año</span>`,
     t.notes && `<span class="note-dot">${icon('note', 13)} ${esc(t.notes.split('\n')[0])}</span>`,
   ].filter(Boolean).join('');
   // Al deslizar la tarjeta a la izquierda aparece detrás el botón «Hecho» (o «Pendiente» si ya está hecha)
@@ -262,13 +274,14 @@ function renderList() {
   openSwipe = null;
   const pending = pendingTasks();
   const done = data.tasks.filter((t) => t.done).sort((a, b) => b.doneAt - a.doneAt);
+  const later = laterTasks();
   let html = '';
-  if (!pending.length && !done.length) {
+  if (!pending.length && !done.length && !later.length) {
     html = `
       <div class="card empty">
         <span class="empty-logo">${logoSVG(64)}</span>
-        <h2>Nada por aquí, bro</h2>
-        <p class="muted">Apunta lo que tengas pendiente, ponle prioridad y fecha, y yo me encargo de recordártelo.</p>
+        <h2>${esc(TT().emptyTitle)}</h2>
+        <p class="muted">${esc(TT().emptyText)}</p>
         <button type="button" class="done-btn" data-add>${icon('plus', 18)} Nueva tarea</button>
       </div>`;
   }
@@ -277,8 +290,15 @@ function renderList() {
     if (!list.length) continue;
     html += `
       <section>
-        <h2 class="group-title"><span class="prio-pill p${p.lvl}">${esc(p.name)}</span><small>${list.length}</small></h2>
+        <h2 class="group-title"><span class="prio-pill p${p.lvl}">${esc(prioName(p.lvl, TT()))}</span><small>${list.length}</small></h2>
         <div class="tasks">${list.map(taskCard).join('')}</div>
+      </section>`;
+  }
+  if (later.length) {
+    html += `
+      <section class="done-section">
+        <button type="button" class="done-toggle ${showLater ? 'open' : ''}" data-toggle-later>${icon('next', 14)} Programadas · cada año<small>${later.length}</small></button>
+        ${showLater ? `<p class="muted small later-note">Vuelven a la lista unos días antes de su fecha.</p><div class="tasks">${later.map(taskCard).join('')}</div>` : ''}
       </section>`;
   }
   if (done.length) {
@@ -294,8 +314,6 @@ function renderList() {
 
 // ---------- Marcar como hecha ----------
 
-const DONE_MSGS = ['¡Hecho, máquina!', 'Uno menos, crack', 'Fuera de la lista 💪', 'Eso es, bro', 'Tachada. Así se hace'];
-
 // `swiped`: la tarjeta ya ha salido deslizando, así que no hace falta otra animación
 function toggleDone(id, swiped = false) {
   const t = data.tasks.find((x) => x.id === id);
@@ -308,8 +326,16 @@ function toggleDone(id, swiped = false) {
   };
   if (t.done) return apply();
   const finish = () => {
-    apply();
-    toast(DONE_MSGS[Math.floor(Math.random() * DONE_MSGS.length)], { label: 'Deshacer', run: () => { t.done = false; t.doneAt = 0; persist(); render(); } });
+    const prevDue = t.due;
+    const result = completeTask(t); // si es anual, pasa a la fecha del año siguiente
+    persist();
+    render();
+    const msgs = TT().doneMsgs;
+    if (result === 'rolled') {
+      toast(TT().back(fmtISO(t.due)), { label: 'Deshacer', run: () => { t.due = prevDue; persist(); render(); } });
+    } else {
+      toast(msgs[Math.floor(Math.random() * msgs.length)], { label: 'Deshacer', run: () => { t.done = false; t.doneAt = 0; persist(); render(); } });
+    }
   };
   if (swiped) return finish();
   // Pequeña animación antes de quitarla de la lista
@@ -404,18 +430,19 @@ function dateShortcuts() {
 
 function openEditor(id) {
   const t = id ? data.tasks.find((x) => x.id === id) : null;
-  const draft = { title: t?.title || '', prio: t ? t.prio : 2, due: t?.due || '', notes: t?.notes || '' };
+  const draft = { title: t?.title || '', prio: t ? t.prio : 2, due: t?.due || '', notes: t?.notes || '', repeat: !!t?.repeat, lead: t?.lead || DEFAULT_LEAD };
   const sheet = openSheet('tall', t ? 'Editar tarea' : 'Nueva tarea');
   sheet.innerHTML = `
     <div class="sheet-head">
       <h2 class="sheet-title">${t ? 'Editar tarea' : 'Nueva tarea'}</h2>
       <button type="button" class="icon-btn sm" data-close aria-label="Cerrar">${icon('close', 18)}</button>
     </div>
-    <input class="title-input" id="ed-title" type="text" placeholder="¿Qué tienes que hacer?" autocomplete="off" enterkeyhint="done" maxlength="200" value="${esc(draft.title)}" />
+    <input class="title-input" id="ed-title" type="text" placeholder="${esc(TT().placeholder)}" autocomplete="off" enterkeyhint="done" maxlength="200" value="${esc(draft.title)}" />
     <p class="opt-label">Prioridad</p>
     <div class="prio-pick" id="ed-prio"></div>
     <p class="opt-label">Fecha límite</p>
     <div class="date-chips" id="ed-dates"></div>
+    <div id="ed-repeat"></div>
     <label class="fld"><span>Notas (opcional)</span><textarea id="ed-notes" rows="2" placeholder="Detalles, teléfono, dirección…">${esc(draft.notes)}</textarea></label>
     <div class="editor-actions">
       ${t ? `<button type="button" class="ghost-btn danger" id="ed-delete">${icon('trash', 18)} Eliminar</button>` : '<span></span>'}
@@ -425,7 +452,7 @@ function openEditor(id) {
   const drawPrio = () => {
     sheet.querySelector('#ed-prio').innerHTML = PRIOS.map((p) => `
       <button type="button" class="prio-opt p${p.lvl} ${draft.prio === p.lvl ? 'on' : ''}" data-prio="${p.lvl}" aria-pressed="${draft.prio === p.lvl}">
-        <i></i><span><b>${esc(p.name)}</b><small>${esc(p.hint)} · ${esc(p.freq.toLowerCase())}</small></span>
+        <i></i><span><b>${esc(prioName(p.lvl, TT()))}</b><small>${esc(prioHint(p.lvl, TT()))} · ${esc(p.freq.toLowerCase())}</small></span>
       </button>`).join('');
   };
   const drawDates = () => {
@@ -436,6 +463,24 @@ function openEditor(id) {
       `<label class="chip date-other ${custom ? 'on' : ''}">${icon('calendar', 15)} ${custom ? esc(dueLabel(draft.due).text) : 'Otra fecha'}
         <input type="date" id="ed-date" value="${draft.due}" /></label>`;
     sheet.querySelector('#ed-date').addEventListener('change', (e) => { draft.due = e.target.value || ''; drawDates(); });
+    drawRepeat();
+  };
+  // Repetir cada año: necesita fecha; se elige con cuánta antelación vuelve a aparecer
+  const LEAD_LABELS = { 7: '7 días', 14: '14 días', 30: '1 mes', 60: '2 meses' };
+  const drawRepeat = () => {
+    const el = sheet.querySelector('#ed-repeat');
+    el.innerHTML = `
+      <button type="button" class="repeat-toggle ${draft.repeat ? 'on' : ''}" data-repeat aria-pressed="${draft.repeat}">
+        ${icon('repeat', 18)}<span><b>Repetir cada año</b><small>${draft.repeat
+          ? (draft.due ? `Al completarla pasa al ${esc(fmtISO(nextYearISO(draft.due)).slice(0, 5))} del año siguiente` : 'Elige una fecha límite para que se pueda repetir')
+          : 'Cumpleaños, renovaciones, impuestos…'}</small></span><i></i>
+      </button>
+      ${draft.repeat ? `
+        <p class="opt-label">Vuelve a la lista con</p>
+        <div class="seg wrap" role="group" aria-label="Antelación">
+          ${LEAD_OPTIONS.map((d) => `<button type="button" data-lead="${d}" class="${draft.lead === d ? 'on' : ''}">${LEAD_LABELS[d]}</button>`).join('')}
+        </div>
+        <p class="muted small">de antelación. Hasta entonces queda en «Programadas» y no avisa.</p>` : ''}`;
   };
   drawPrio();
   drawDates();
@@ -453,18 +498,28 @@ function openEditor(id) {
     if (p) { draft.prio = Number(p.dataset.prio); drawPrio(); return; }
     const d = e.target.closest('[data-due]');
     if (d) { draft.due = d.dataset.due; drawDates(); return; }
+    if (e.target.closest('[data-repeat]')) { draft.repeat = !draft.repeat; drawRepeat(); return; }
+    const l = e.target.closest('[data-lead]');
+    if (l) { draft.lead = Number(l.dataset.lead); drawRepeat(); return; }
     if (e.target.closest('[data-close]')) closeSheet();
   });
   saveBtn.addEventListener('click', () => {
     const title = titleEl.value.trim();
     if (!title) return;
+    if (draft.repeat && !draft.due) { toast('Ponle una fecha límite para que se repita cada año'); return; }
     const notes = sheet.querySelector('#ed-notes').value.trim();
-    if (t) Object.assign(t, { title, prio: draft.prio, due: draft.due, notes });
-    else data.tasks.push({ id: uid(), title, prio: draft.prio, due: draft.due, notes, done: false, doneAt: 0, created: Date.now() });
+    const fields = { title, prio: draft.prio, due: draft.due, notes, repeat: draft.repeat, lead: draft.lead };
+    let task = t;
+    if (t) Object.assign(t, fields);
+    else data.tasks.push(task = { id: uid(), ...fields, done: false, doneAt: 0, created: Date.now() });
     persist();
     closeSheet();
     render();
-    if (!t) toast(draft.prio === 4 ? 'Apuntada. Esta no se te escapa 🔥' : 'Apuntada');
+    if (isDormant(task, todayISO())) {
+      const back = new Date(`${task.due}T12:00:00`);
+      back.setDate(back.getDate() - task.lead);
+      toast(`Guardada en Programadas: vuelve a la lista el ${fmtISO(isoOf(back))}`);
+    } else if (!t) toast(draft.prio === 4 ? TT().addedTop : TT().added);
   });
   sheet.querySelector('#ed-delete')?.addEventListener('click', () => {
     if (!confirm(`¿Eliminar «${t.title}»?`)) return;
@@ -535,7 +590,7 @@ async function enableNotifications() {
   }
   const perm = await Notification.requestPermission();
   if (perm !== 'granted') {
-    alert('Sin permiso no puedo avisarte, bro. Puedes darlo en los ajustes del navegador o del móvil (Notificaciones → TaskCTRL).');
+    alert(`${TT().noPerm} Puedes darlo en los ajustes del navegador o del móvil (Notificaciones → TaskCTRL).`);
     return false;
   }
   data.settings.on = true;
@@ -631,7 +686,7 @@ function openNotifSheet() {
       </div>
       <p class="muted small">Cada mañana llega un resumen con todo lo pendiente. Durante el día, cada tarea avisa según su prioridad:</p>
       <ul class="freq-list">
-        ${PRIOS.map((p) => `<li><span class="prio-pill p${p.lvl}">${esc(p.name)}</span><small>${esc(p.freq)}</small></li>`).join('')}
+        ${PRIOS.map((p) => `<li><span class="prio-pill p${p.lvl}">${esc(prioName(p.lvl, TT()))}</span><small>${esc(p.freq)}</small></li>`).join('')}
       </ul>
       <p class="muted small">El día que vence una tarea, y si ya está vencida, sube un nivel y avisa más a menudo.</p>
       <div class="body-actions"><button class="done-btn" type="button" data-close>Listo</button></div>`;
@@ -934,11 +989,44 @@ function openSyncSheet() {
 // Mientras la app está abierta, trae cada poco lo cambiado en otros dispositivos
 setInterval(() => { if (!document.hidden) syncNow(); }, SYNC_EVERY_MS);
 
+// ---------- Tono del lenguaje (menú ⋯) ----------
+
+function openToneSheet() {
+  const sheet = openSheet('', 'Tono del lenguaje');
+  const draw = () => {
+    const cur = data.settings.tone;
+    sheet.innerHTML = `
+      <h2 class="sheet-title">Tono del lenguaje</h2>
+      <p class="muted small">Cambia cómo se llaman las prioridades y cómo te hablan los mensajes y los avisos.</p>
+      <div class="tone-list">
+        ${Object.entries(TONES).map(([k, tn]) => `
+          <button type="button" class="tone-opt ${cur === k ? 'on' : ''}" data-tone="${k}" aria-pressed="${cur === k}">
+            <span class="tone-head"><b>${esc(tn.label)}</b>${cur === k ? icon('check', 18, 2) : ''}</span>
+            <span class="tone-pills">${PRIOS.slice(0, 3).map((p) => `<span class="prio-pill p${p.lvl}">${esc(prioName(p.lvl, tn))}</span>`).join('')}</span>
+            <small>${esc(tn.doneMsgs[0])} · ${esc(tn.nothing)}</small>
+          </button>`).join('')}
+      </div>
+      <div class="body-actions"><button class="done-btn" type="button" data-done>Listo</button></div>`;
+  };
+  draw();
+  sheet.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tone]');
+    if (b) {
+      data.settings.tone = b.dataset.tone;
+      persist(); // también llega al service worker, que escribe los avisos
+      render();
+      draw();
+    }
+    if (e.target.closest('[data-done]')) closeSheet();
+  });
+}
+
 // ---------- Menú ⋯ ----------
 
 const MENU = [
   { label: 'Avisos', icon: 'bell', run: () => openNotifSheet() },
   { label: 'Sincronización en la nube', icon: 'cloud', run: () => openSyncSheet() },
+  { label: 'Tono del lenguaje', icon: 'chat', run: () => openToneSheet() },
   { label: 'Opciones de visualización', icon: 'palette', run: () => openDisplaySheet() },
   { label: 'Exportar copia', icon: 'download', run: () => exportBackup() },
   { label: 'Importar copia', icon: 'upload', run: () => $('import-input').click() },
@@ -1049,6 +1137,7 @@ document.querySelector('main').addEventListener('click', (e) => {
   if (e.target.closest('[data-add]')) return openEditor();
   if (e.target.closest('[data-notif]')) return openNotifSheet();
   if (e.target.closest('[data-toggle-done]')) { showDone = !showDone; return renderList(); }
+  if (e.target.closest('[data-toggle-later]')) { showLater = !showLater; return renderList(); }
   if (e.target.closest('[data-clear-done]') && confirm('¿Borrar todas las tareas hechas?')) {
     data.tasks = data.tasks.filter((t) => !t.done);
     persist();

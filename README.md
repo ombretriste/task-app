@@ -2,7 +2,7 @@
 
 *by OmT Finance*
 
-Versión **0.3.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
+Versión **0.4.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
 
 App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prioridad, ordenadas por prioridad, con un tic de «hecha» y avisos que se repiten más a menudo cuanto más urgente es la tarea.
 
@@ -12,7 +12,9 @@ App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prio
 - **Resumen**: cuántas tareas quedan, cuántas están vencidas o son para hoy, y una barra con el reparto por prioridad.
 - **Lista agrupada por prioridad** (y dentro, por fecha límite). Tocar el círculo, o deslizar la tarea a la izquierda, la marca como hecha (con «Deshacer»). Deslizando un poco queda a la vista el botón «Hecho»; deslizando más de media tarjeta se marca al soltar; tocar la tarea la abre para editarla. Las hechas quedan plegadas al final y se borran solas al mes.
 - **Nueva tarea**: texto, prioridad, fecha límite (Hoy, Mañana, El finde, En una semana u otra fecha) y notas opcionales.
-- **Prioridades** (colores neón):
+- **Repetir cada año** (en el editor, necesita fecha límite): al completarla no se cierra, pasa a la misma fecha del año siguiente (el 29 de febrero, al 28) y queda en la sección plegada «Programadas», sin avisar, hasta que faltan 7, 14, 30 (por defecto) o 60 días. Sirve para cumpleaños, renovaciones, impuestos…
+- **Tono del lenguaje** (menú ⋯): *De la calle* (el de siempre), *Estándar* (Urgente · Importante · Normal · Cuando puedas · Algún día) o *Formal* (Prioridad máxima · alta · media · baja · Sin urgencia). Cambia los nombres de las prioridades, los mensajes y el texto de los avisos; es de cada dispositivo.
+- **Prioridades** (colores neón; nombres del tono *De la calle*):
   - 🔴 *Pa' ayer, bro* — aviso cada hora.
   - 🟠 *No olvides esto, bro* — cada 3 horas.
   - 🟡 *Que no se te pase* — cada 6 horas.
@@ -22,7 +24,7 @@ App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prio
   El día que vence una tarea, y si ya está vencida, sube un nivel.
 - **Avisos** (menú ⋯ → Avisos): resumen cada mañana a la hora elegida (08:30 por defecto) y recordatorios durante el día hasta la hora de corte (22:00 por defecto). En Android, la notificación de una sola tarea tiene el botón «✓ Hecho».
 - **Sincronización en la nube** (menú ⋯): cuenta con usuario y contraseña (crearla pide la misma clave de registro que UnderCTRL y PayCTRL) para tener las tareas en varios dispositivos. Se cifran en el dispositivo (PBKDF2 + AES-256-GCM) antes de subirse a `api/sync`; el servidor solo guarda un bloque ilegible. Si se cambian cosas en dos dispositivos a la vez se fusionan tarea a tarea (gana el cambio más reciente de cada una y los borrados se respetan). Los avisos y su horario se configuran en cada dispositivo.
-- Menú ⋯: Avisos, Sincronización en la nube, Opciones de visualización (oscuro/claro/automático y cuatro fondos: Fucsia, Noche, Menta y Glaciar), Exportar copia e Importar copia.
+- Menú ⋯: Avisos, Sincronización en la nube, Tono del lenguaje, Opciones de visualización (oscuro/claro/automático y cuatro fondos: Fucsia, Noche, Menta y Glaciar), Exportar copia e Importar copia.
 
 Las tareas se guardan en el propio dispositivo (`localStorage` `taskctrl:v1`, con una copia en IndexedDB `taskctrl` para el service worker) y, si se activa, en la nube cifradas (`tsk:acct:*` en Upstash).
 

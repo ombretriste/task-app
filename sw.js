@@ -1,5 +1,5 @@
 // Cambia la versión al modificar archivos para que los móviles descarguen la nueva versión
-const CACHE = 'taskctrl-v4';
+const CACHE = 'taskctrl-v5';
 const ASSETS = [
   './',
   'index.html',
@@ -72,9 +72,7 @@ async function markDone(id) {
   const state = await kvGet('state');
   const task = state && state.tasks.find((t) => t.id === id);
   if (!task || task.done) return;
-  task.done = true;
-  task.doneAt = Date.now();
-  task.upd = Date.now(); // para la fusión con la nube
+  completeTask(task); // si es anual pasa al año siguiente; marca `upd` para la fusión con la nube
   state.upd = Date.now();
   await kvSet('state', state);
   try { await syncSchedule(state); } catch (_) { /* sin conexión */ }
