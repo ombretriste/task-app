@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.4.2';
 const STORAGE_KEY = 'taskctrl:v1';
 const DISPLAY_KEY = 'taskctrl:display';
 const INSTALL_HINT_KEY = 'taskctrl:installHint';
