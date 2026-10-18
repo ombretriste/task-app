@@ -1,5 +1,5 @@
 // Cambia la versión al modificar archivos para que los móviles descarguen la nueva versión
-const CACHE = 'taskctrl-v2';
+const CACHE = 'taskctrl-v3';
 const ASSETS = [
   './',
   'index.html',

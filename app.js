@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.2.0';
 const STORAGE_KEY = 'taskctrl:v1';
 const DISPLAY_KEY = 'taskctrl:display';
 const INSTALL_HINT_KEY = 'taskctrl:installHint';
@@ -10,6 +10,7 @@ const KEEP_DONE_DAYS = 30; // las tareas hechas se borran solas pasado un mes
 const ICONS = {
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   next: '<path d="M9 5l7 7-7 7"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   trash: '<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/><path d="M10 11v5.5M14 11v5.5"/>',
@@ -204,18 +205,23 @@ function taskCard(t) {
     due && `<span class="due ${t.done ? '' : due.cls}">${icon('calendar', 13)}${esc(due.text)}</span>`,
     t.notes && `<span class="note-dot">${icon('note', 13)} ${esc(t.notes.split('\n')[0])}</span>`,
   ].filter(Boolean).join('');
+  // Al deslizar la tarjeta a la izquierda aparece detrás el botón «Hecho» (o «Pendiente» si ya está hecha)
   return `
+    <div class="swipe p${t.prio}" data-swipe="${t.id}">
+    <button type="button" class="swipe-act ${t.done ? 'undo' : ''}" data-check="${t.id}" tabindex="-1">${icon(t.done ? 'undo' : 'check', 22, 2.2)}<span>${t.done ? 'Pendiente' : 'Hecho'}</span></button>
     <div class="task p${t.prio} ${t.done ? 'is-done' : ''}" data-task="${t.id}">
       <button type="button" class="check ${t.done ? 'on' : ''}" data-check="${t.id}" aria-label="${t.done ? 'Marcar como pendiente' : 'Marcar como hecha'}">${icon('check', 20, 2.4)}</button>
       <button type="button" class="task-main" data-edit="${t.id}">
         <span class="task-title">${esc(t.title)}</span>
         ${sub ? `<span class="task-sub">${sub}</span>` : ''}
       </button>
+    </div>
     </div>`;
 }
 
 function renderList() {
   const el = $('list');
+  openSwipe = null;
   const pending = pendingTasks();
   const done = data.tasks.filter((t) => t.done).sort((a, b) => b.doneAt - a.doneAt);
   let html = '';
@@ -252,7 +258,8 @@ function renderList() {
 
 const DONE_MSGS = ['¡Hecho, máquina!', 'Uno menos, crack', 'Fuera de la lista 💪', 'Eso es, bro', 'Tachada. Así se hace'];
 
-function toggleDone(id) {
+// `swiped`: la tarjeta ya ha salido deslizando, así que no hace falta otra animación
+function toggleDone(id, swiped = false) {
   const t = data.tasks.find((x) => x.id === id);
   if (!t) return;
   const apply = () => {
@@ -262,15 +269,78 @@ function toggleDone(id) {
     render();
   };
   if (t.done) return apply();
+  const finish = () => {
+    apply();
+    toast(DONE_MSGS[Math.floor(Math.random() * DONE_MSGS.length)], { label: 'Deshacer', run: () => { t.done = false; t.doneAt = 0; persist(); render(); } });
+  };
+  if (swiped) return finish();
   // Pequeña animación antes de quitarla de la lista
   const card = document.querySelector(`[data-task="${id}"]`);
   card?.querySelector('.check')?.classList.add('on');
   card?.classList.add('leaving');
-  setTimeout(() => {
-    apply();
-    toast(DONE_MSGS[Math.floor(Math.random() * DONE_MSGS.length)], { label: 'Deshacer', run: () => { t.done = false; t.doneAt = 0; persist(); render(); } });
-  }, 380);
+  setTimeout(finish, 380);
 }
+
+// ---------- Deslizar una tarea a la izquierda: «Hecho» ----------
+// Deslizando un poco se queda abierto el botón; deslizando más de casi la mitad, se marca al soltar.
+
+const SWIPE_OPEN = 96;  // ancho del botón cuando se queda abierto
+const SWIPE_DONE = 0.45; // fracción del ancho a partir de la cual se marca al soltar
+let swipe = null;       // gesto en curso
+let openSwipe = null;   // tarjeta que se ha quedado abierta
+let swipedAt = 0;       // para ignorar el clic que llega justo después de deslizar
+
+function setSwipe(wrap, x, animate) {
+  const card = wrap.querySelector('.task');
+  const act = wrap.querySelector('.swipe-act');
+  card.style.transition = act.style.transition = animate ? '' : 'none';
+  card.style.transform = x ? `translateX(${x}px)` : '';
+  act.style.width = `${Math.max(0, -x - 6)}px`;
+  wrap.classList.toggle('armed', -x > wrap.offsetWidth * SWIPE_DONE);
+}
+function closeOpenSwipe() {
+  if (!openSwipe) return;
+  setSwipe(openSwipe, 0, true);
+  openSwipe = null;
+}
+function completeBySwipe(wrap) {
+  setSwipe(wrap, -wrap.offsetWidth, true);
+  openSwipe = null;
+  setTimeout(() => toggleDone(wrap.dataset.swipe, true), 220);
+}
+
+document.addEventListener('pointerdown', (e) => {
+  const wrap = e.target.closest('.swipe');
+  // Tocar fuera de la tarjeta abierta la cierra (y ese toque no abre nada más)
+  if (openSwipe && wrap !== openSwipe) { closeOpenSwipe(); swipedAt = Date.now(); }
+  if (!wrap || e.target.closest('.swipe-act') || e.button) return;
+  swipe = { wrap, pid: e.pointerId, x0: e.clientX, y0: e.clientY, base: wrap === openSwipe ? -SWIPE_OPEN : 0, dx: 0, active: false };
+});
+document.addEventListener('pointermove', (e) => {
+  if (!swipe || e.pointerId !== swipe.pid) return;
+  const dx = e.clientX - swipe.x0;
+  const dy = e.clientY - swipe.y0;
+  if (!swipe.active) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { swipe = null; return; } // desplazamiento vertical
+    if (Math.abs(dx) < 10) return;
+    swipe.active = true;
+    swipe.wrap.setPointerCapture?.(e.pointerId);
+  }
+  swipe.dx = Math.min(0, swipe.base + dx);
+  setSwipe(swipe.wrap, swipe.dx, false);
+});
+function endSwipe(e) {
+  if (!swipe || e.pointerId !== swipe.pid) return;
+  const { wrap, dx, active } = swipe;
+  swipe = null;
+  if (!active) return;
+  swipedAt = Date.now();
+  if (e.type === 'pointerup' && -dx > wrap.offsetWidth * SWIPE_DONE) completeBySwipe(wrap);
+  else if (e.type === 'pointerup' && -dx > SWIPE_OPEN * 0.6) { setSwipe(wrap, -SWIPE_OPEN, true); openSwipe = wrap; }
+  else { setSwipe(wrap, 0, true); if (openSwipe === wrap) openSwipe = null; }
+}
+document.addEventListener('pointerup', endSwipe);
+document.addEventListener('pointercancel', endSwipe);
 
 // ---------- Hojas (ventanas inferiores) ----------
 
@@ -689,6 +759,9 @@ function openDisplaySheet() {
 
 $('add-btn').addEventListener('click', () => openEditor());
 document.querySelector('main').addEventListener('click', (e) => {
+  if (Date.now() - swipedAt < 400) return;
+  const act = e.target.closest('.swipe-act');
+  if (act) return completeBySwipe(act.parentElement);
   const check = e.target.closest('[data-check]');
   if (check) return toggleDone(check.dataset.check);
   const edit = e.target.closest('[data-edit]');
