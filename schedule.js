@@ -32,7 +32,8 @@ const TONES = {
     placeholder: '¿Qué tienes que hacer?',
     noPerm: 'Sin permiso no puedo avisarte, bro.',
     morning: 'Buenos días ☀️',
-    nothing: 'Nada pendiente. Hoy vas sobrado, crack.',
+    nothing: 'Nada para hoy. Vas sobrado, crack.',
+    tomorrow: 'Ojo, mañana toca',
     many: (n) => `${n} cosas que no puedes olvidar`,
     back: (when) => `¡Hecho! Vuelve el ${when}`,
   },
@@ -52,7 +53,8 @@ const TONES = {
     placeholder: '¿Qué tienes que hacer?',
     noPerm: 'Sin permiso no puedo enviarte avisos.',
     morning: 'Buenos días',
-    nothing: 'No tienes tareas pendientes.',
+    nothing: 'No tienes tareas para hoy.',
+    tomorrow: 'Para mañana',
     many: (n) => `${n} tareas pendientes`,
     back: (when) => `Tarea completada. Vuelve el ${when}`,
   },
@@ -72,7 +74,8 @@ const TONES = {
     placeholder: 'Descripción de la tarea',
     noPerm: 'Sin permiso no es posible enviarle avisos.',
     morning: 'Buenos días',
-    nothing: 'No tiene tareas pendientes.',
+    nothing: 'No tiene tareas para hoy.',
+    tomorrow: 'Tareas para mañana',
     many: (n) => `${n} tareas requieren su atención`,
     back: (when) => `Tarea completada. Próxima fecha: ${when}`,
   },
@@ -85,6 +88,7 @@ const DEFAULT_SETTINGS = { on: false, morning: '08:30', end: 22, tone: 'calle' }
 const HORIZON_DAYS = 7;   // se programan los avisos de los próximos 7 días
 const MAX_SLOTS = 400;
 const DAILY_AFTER_H = 9;  // el aviso diario de «Tranqui» llega 9 h después del resumen
+const EVENING_BEFORE_MIN = 30; // el aviso de lo de mañana llega 30 min antes de la hora de corte
 const LEAD_OPTIONS = [7, 14, 30, 60]; // días de antelación con los que reaparece una tarea anual
 const DEFAULT_LEAD = 30;
 
@@ -104,6 +108,10 @@ function nextYearISO(iso) {
 // Una tarea anual «duerme» hasta que faltan `lead` días para su fecha: no sale en pendientes ni avisa
 const isDormant = (task, dayISO) => !!(task.repeat && task.due && daysBetween(dayISO, task.due) > (task.lead || DEFAULT_LEAD));
 const activeTasks = (state, dayISO) => ((state && state.tasks) || []).filter((t) => !t.done && !isDormant(t, dayISO));
+// Tareas que tocan ese día: las que vencen ese día, las vencidas y las que no tienen fecha.
+// Las de fecha futura no avisan hasta su día (solo un aviso la víspera por la noche).
+const todayTasks = (state, dayISO) => activeTasks(state, dayISO).filter((t) => !t.due || t.due <= dayISO);
+const addDaysToISO = (iso, n) => { const d = new Date(`${iso}T12:00:00`); d.setDate(d.getDate() + n); return isoOf(d); };
 
 // Marca una tarea como hecha. Si se repite cada año no se cierra: pasa a su fecha del año siguiente
 // (la primera que quede en el futuro) y se queda dormida hasta que se acerque.
@@ -132,7 +140,10 @@ function effLevel(task, dayISO) {
   return task.due && task.due <= dayISO ? Math.min(4, task.prio + 1) : task.prio;
 }
 
-// Momentos de aviso entre `from` y `to` (ms): [{ t, kind: 'morning'|'remind', ids: [...] }]
+// Momentos de aviso entre `from` y `to` (ms): [{ t, kind: 'morning'|'remind'|'evening', ids: [...] }]
+// · morning: resumen con las tareas del día, a la hora elegida.
+// · remind: durante el día, cada tarea del día según su prioridad.
+// · evening: antes de la hora de corte, lo que vence mañana.
 function computeSlots(state, from, to) {
   const s = { ...DEFAULT_SETTINGS, ...(state && state.settings) };
   if (!s.on) return [];
@@ -151,7 +162,7 @@ function computeSlots(state, from, to) {
     const morning = new Date(day.getFullYear(), day.getMonth(), day.getDate(), mh, mm).getTime();
     const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), s.end, 0).getTime();
     const dayISO = isoOf(day);
-    const pending = activeTasks(state, dayISO);
+    const pending = todayTasks(state, dayISO);
     // El resumen de la mañana sale siempre (aunque no haya nada: así se mantiene la cadena de avisos)
     add(morning, 'morning', pending.map((t) => t.id));
     for (const task of pending) {
@@ -162,6 +173,15 @@ function computeSlots(state, from, to) {
         const t = Math.min(morning + DAILY_AFTER_H * 3600e3, end - 3600e3);
         if (t > morning) add(t, 'remind', [task.id]);
       }
+    }
+    // La víspera por la noche: lo que vence mañana. Si cae cerca de otro aviso, se adelanta hasta
+    // tener 10 minutos libres alrededor (para no recibir dos notificaciones seguidas).
+    const tomorrowISO = addDaysToISO(dayISO, 1);
+    const tomorrow = activeTasks(state, dayISO).filter((t) => t.due === tomorrowISO);
+    if (tomorrow.length) {
+      let t = end - EVENING_BEFORE_MIN * 60e3;
+      while ([...slots.keys()].some((k) => Math.abs(k - t) < 10 * 60e3)) t -= 5 * 60e3;
+      if (t > morning) add(t, 'evening', tomorrow.map((x) => x.id));
     }
   }
   return [...slots.values()].sort((a, b) => a.t - b.t).slice(0, MAX_SLOTS);
@@ -182,7 +202,7 @@ function dueText(due, todayISO) {
 function buildNotification(slot, state, now = Date.now()) {
   const today = isoOf(new Date(now));
   const tone = toneOf(state);
-  const pending = sortTasks(activeTasks(state, today));
+  const pending = sortTasks(todayTasks(state, today));
   const line = (t) => `${PRIO(t.prio).dot} ${t.title}${t.due ? ` · ${dueText(t.due, today)}` : ''}`;
   const list = (arr) => arr.slice(0, 5).map(line).join('\n') + (arr.length > 5 ? `\n…y ${arr.length - 5} más` : '');
   if (!slot || slot.kind === 'morning') {
@@ -192,10 +212,21 @@ function buildNotification(slot, state, now = Date.now()) {
     }
     const late = pending.filter((t) => t.due && t.due < today).length;
     return {
-      title: `${morning ? `${tone.morning} · ` : ''}${pending.length} ${tone.things(pending.length)}${late ? ` (${late} vencida${late > 1 ? 's' : ''})` : ''}`,
+      title: `${morning ? `${tone.morning} · ` : ''}${pending.length} ${tone.things(pending.length)} hoy${late ? ` (${late} vencida${late > 1 ? 's' : ''})` : ''}`,
       body: list(pending),
       tag: 'taskctrl-summary',
       ids: [],
+    };
+  }
+  if (slot.kind === 'evening') {
+    const tomorrowISO = addDaysToISO(today, 1);
+    const next = sortTasks(activeTasks(state, today).filter((t) => slot.ids.includes(t.id) && t.due === tomorrowISO));
+    if (!next.length) return null;
+    return {
+      title: `🌙 ${tone.tomorrow} · ${next.length} ${tone.things(next.length).replace(/ pendientes?$/, '')}`,
+      body: next.slice(0, 5).map((t) => `${PRIO(t.prio).dot} ${t.title}`).join('\n') + (next.length > 5 ? `\n…y ${next.length - 5} más` : ''),
+      tag: 'taskctrl-evening',
+      ids: next.length === 1 ? [next[0].id] : [],
     };
   }
   const tasks = sortTasks(slot.ids.map((id) => pending.find((t) => t.id === id)).filter(Boolean));

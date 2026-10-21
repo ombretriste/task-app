@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 // Página de donaciones (Ko-fi), la misma que en Up to 40%. Vacía: no se muestra el botón «Invítame a un café».
 const DONATE_URL = 'https://ko-fi.com/omtapps';
 const STORAGE_KEY = 'taskctrl:v1';
@@ -686,11 +686,11 @@ function openNotifSheet() {
         <label class="fld"><span>Resumen de la mañana</span><input type="time" id="nt-morning" value="${s.morning}" /></label>
         <label class="fld"><span>Sin avisos a partir de</span><select id="nt-end">${hours.map((h) => `<option value="${h}" ${h === s.end ? 'selected' : ''}>${pad(h % 24)}:00</option>`).join('')}</select></label>
       </div>
-      <p class="muted small">Cada mañana llega un resumen con todo lo pendiente. Durante el día, cada tarea avisa según su prioridad:</p>
+      <p class="muted small">Cada mañana llega un resumen con las tareas del día (las que vencen hoy, las vencidas y las que no tienen fecha). Durante el día, esas tareas avisan según su prioridad:</p>
       <ul class="freq-list">
         ${PRIOS.map((p) => `<li><span class="prio-pill p${p.lvl}">${esc(prioName(p.lvl, TT()))}</span><small>${esc(p.freq)}</small></li>`).join('')}
       </ul>
-      <p class="muted small">El día que vence una tarea, y si ya está vencida, sube un nivel y avisa más a menudo.</p>
+      <p class="muted small">Las tareas con fecha no avisan hasta su día: la víspera, media hora antes de la hora de corte, llega un aviso con lo que toca mañana. El día que vence una tarea, y si ya está vencida, sube un nivel y avisa más a menudo.</p>
       <div class="body-actions"><button class="done-btn" type="button" data-close>Listo</button></div>`;
   };
   draw();

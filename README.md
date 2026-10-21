@@ -2,7 +2,7 @@
 
 *by OmT Finance*
 
-Versión **0.5.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
+Versión **0.6.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
 
 App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prioridad, ordenadas por prioridad, con un tic de «hecha» y avisos que se repiten más a menudo cuanto más urgente es la tarea.
 
@@ -22,7 +22,7 @@ App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prio
   - 🔵 *Si eso, ya tal* — solo en el resumen de la mañana.
   
   El día que vence una tarea, y si ya está vencida, sube un nivel.
-- **Avisos** (menú ⋯ → Avisos): resumen cada mañana a la hora elegida (08:30 por defecto) y recordatorios durante el día hasta la hora de corte (22:00 por defecto). En Android, la notificación de una sola tarea tiene el botón «✓ Hecho».
+- **Avisos** (menú ⋯ → Avisos): a la hora del resumen (08:30 por defecto) llega uno con las tareas del día: las que vencen hoy, las vencidas y las que no tienen fecha. Durante el día, esas tareas avisan según su prioridad hasta la hora de corte (22:00 por defecto). Las tareas con fecha futura no avisan hasta su día: la víspera, media hora antes de la hora de corte (o un poco antes si coincide con otro aviso), llega uno con lo que vence mañana. En Android, la notificación de una sola tarea tiene el botón «✓ Hecho».
 - **Sincronización en la nube** (menú ⋯): cuenta con usuario y contraseña (crearla pide la misma clave de registro que UnderCTRL y PayCTRL) para tener las tareas en varios dispositivos. Se cifran en el dispositivo (PBKDF2 + AES-256-GCM) antes de subirse a `api/sync`; el servidor solo guarda un bloque ilegible. Si se cambian cosas en dos dispositivos a la vez se fusionan tarea a tarea (gana el cambio más reciente de cada una y los borrados se respetan). Los avisos y su horario se configuran en cada dispositivo.
 - **Invítame a un café**: al final de la pantalla, un botón discreto lleva a la página de donaciones (ko-fi.com/omtapps), igual que en Up to 40%. En el iPhone con la app instalada intenta abrirla en Safari, donde funciona el pago.
 - Menú ⋯: Avisos, Sincronización en la nube, Tono del lenguaje, Opciones de visualización (oscuro/claro/automático y cuatro fondos: Fucsia, Noche, Menta y Glaciar), Exportar copia e Importar copia.
