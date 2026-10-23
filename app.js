@@ -1,13 +1,15 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.6.1';
+const APP_VERSION = '0.7.0';
 // Página de donaciones (Ko-fi), la misma que en Up to 40%. Vacía: no se muestra el botón «Invítame a un café».
 const DONATE_URL = 'https://ko-fi.com/omtapps';
 const STORAGE_KEY = 'taskctrl:v1';
 const DISPLAY_KEY = 'taskctrl:display';
 const INSTALL_HINT_KEY = 'taskctrl:installHint';
 const SYNC_KEY = 'taskctrl:sync';
+const TRIP_LINK_KEY = 'taskctrl:tripLink';
+const TRIP_APP_URL = 'https://trip-app-vfeg.vercel.app/';
 const KEEP_DONE_DAYS = 30; // las tareas hechas se borran solas pasado un mes
 const KEEP_DELETED_DAYS = 90; // cuánto se recuerda un borrado (para que la nube no lo resucite)
 
@@ -30,6 +32,7 @@ const ICONS = {
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
   repeat: '<path d="M17 3l3 3-3 3"/><path d="M4 11V9a3 3 0 0 1 3-3h13"/><path d="M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 0 1-3 3H4"/>',
   chat: '<path d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 17h-8l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 5 5z"/><path d="M8 10h8M8 13h5"/>',
+  plane: '<path d="M10.5 13.5L4 11l1.5-1.5 7 .5 4-4c.8-.8 2.2-.8 3 0s.8 2.2 0 3l-4 4 .5 7L14.5 21 12 14.5"/><path d="M7 17l-2 2"/>',
   logout: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
 };
 const icon = (name, size = 22, sw = 1.4) =>
@@ -130,6 +133,10 @@ function cleanData(d) {
       due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || '') ? t.due : '',
       notes: String(t.notes || ''),
       repeat: !!t.repeat,
+      // Tareas creadas desde TripCTRL: origen, nombre del viaje y cómo se generaron
+      src: t.src === 'trip' ? 'trip' : '',
+      trip: String(t.trip || ''),
+      gen: String(t.gen || ''),
       lead: LEAD_OPTIONS.includes(Number(t.lead)) ? Number(t.lead) : DEFAULT_LEAD,
       done: !!t.done,
       doneAt: Number(t.doneAt) || 0,
@@ -255,6 +262,7 @@ function taskCard(t) {
   const sub = [
     due && `<span class="due ${t.done ? '' : due.cls}">${icon('calendar', 13)}${esc(due.text)}</span>`,
     t.repeat && `<span class="due">${icon('repeat', 13)}Cada año</span>`,
+    t.src === 'trip' && `<span class="due">${icon('plane', 13)}${esc(t.trip || 'TripCTRL')}</span>`,
     t.notes && `<span class="note-dot">${icon('note', 13)} ${esc(t.notes.split('\n')[0])}</span>`,
   ].filter(Boolean).join('');
   // Al deslizar la tarjeta a la izquierda aparece detrás el botón «Hecho» (o «Pendiente» si ya está hecha)
@@ -991,6 +999,190 @@ function openSyncSheet() {
 // Mientras la app está abierta, trae cada poco lo cambiado en otros dispositivos
 setInterval(() => { if (!document.hidden) syncNow(); }, SYNC_EVERY_MS);
 
+// ---------- Vínculo con TripCTRL ----------
+// TaskCTRL lee los viajes de TripCTRL y crea solas las tareas de cada reserva (tarjeta de embarque,
+// recoger el coche, la maleta…). Hace falta la nube activada en las dos apps con el mismo usuario;
+// la contraseña de TripCTRL se pide una vez para derivar aquí sus claves (nunca se guarda).
+// Las tareas creadas llevan `src: 'trip'` y `gen` (cómo se generaron): si el viaje cambia se
+// actualizan, si desaparece la reserva se quitan, y si las borras a mano no vuelven a crearse.
+
+let tripLink = load(TRIP_LINK_KEY, null); // { username, user, auth, key, at }
+let tripError = '';
+let tripBusy = false;
+
+async function deriveTripAccount(username, password) {
+  const u = username.trim().toLowerCase();
+  const base = await crypto.subtle.importKey('raw', utf8.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = (salt) => crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: utf8.encode(salt), iterations: PBKDF2_ITERATIONS }, base, 256);
+  const [auth, key] = await Promise.all([bits(`tripctrl-auth:${u}`), bits(`tripctrl-enc:${u}`)]);
+  return { username: u, user: await sha256hex(`tripctrl-user:${u}`), auth: hex(auth), key: toB64(key) };
+}
+const tripErrorText = (err) => ({
+  'peer-missing': 'No se encuentra tu cuenta de TripCTRL en la nube. Comprueba que el usuario es el mismo y que las dos apps usan la misma base de datos en Vercel.',
+  'peer-auth': 'La contraseña de TripCTRL no es correcta.',
+  'too-many': 'Demasiados intentos. Espera 15 minutos.',
+}[err.message] || syncErrorText(err));
+
+// Qué tareas salen de cada viaje (solo de los que no han terminado). Fechas: `due` es el día de la tarea.
+function tripTaskList(trips) {
+  const today = todayISO();
+  const out = [];
+  const add = (trip, key, title, due, prio, notes, when) => {
+    if (!due || when < today) return; // la reserva ya pasó
+    out.push({ id: `trip-${trip.id}-${key}`, title, due: due < today ? today : due, prio, notes, trip: trip.name });
+  };
+  const at = (p) => [p.time && `a las ${p.time}`, p.place, p.ref && `reserva ${p.ref}`].filter(Boolean).join(' · ');
+  for (const trip of trips || []) {
+    if (!trip?.id || !trip.end || trip.end < today) continue;
+    for (const p of trip.plan || []) {
+      if (!p.date) continue;
+      const name = p.title || '';
+      const label = (s) => (name ? `${s} · ${name}` : s);
+      if (p.kind === 'flight') {
+        add(trip, `${p.id}-boarding`, label('Hacer el check-in y sacar la tarjeta de embarque'), addDaysToISO(p.date, -1), 3,
+          `Vuelo el ${fmtISO(p.date)}${at(p) ? ` ${at(p)}` : ''}. El check-in online suele abrir 24–48 h antes.`, p.date);
+      } else if (p.kind === 'train') {
+        add(trip, `${p.id}-ticket`, label('Tener a mano el billete'), addDaysToISO(p.date, -1), 2,
+          `Sale el ${fmtISO(p.date)}${at(p) ? ` ${at(p)}` : ''}.`, p.date);
+      } else if (p.kind === 'car') {
+        add(trip, `${p.id}-pickup`, label('Recoger el coche de alquiler (lleva carnet y tarjeta de crédito)'), p.date, 3,
+          `Recogida${at(p) ? ` ${at(p)}` : ''}${p.until ? `. Devolución el ${fmtISO(p.until)}` : ''}.`, p.date);
+        if (p.until) add(trip, `${p.id}-return`, label('Devolver el coche de alquiler (con el depósito como toque)'), p.until, 3, at(p), p.until);
+      } else if (p.kind === 'hotel') {
+        add(trip, `${p.id}-confirm`, label('Confirmar la reserva del alojamiento y la hora de llegada'), addDaysToISO(p.date, -2), 1,
+          `Entrada el ${fmtISO(p.date)}${at(p) ? ` ${at(p)}` : ''}.`, p.date);
+      } else if (p.kind === 'activity' && (p.ref || p.cost)) {
+        add(trip, `${p.id}-tickets`, label('Llevar las entradas'), p.date, 2, at(p), p.date);
+      }
+    }
+    // Del viaje entero
+    const pending = (trip.pack || []).filter((x) => !x.done).length;
+    add(trip, 'pack', `Hacer la maleta · ${trip.name}`, addDaysToISO(trip.start, -1), 3,
+      pending ? `Quedan ${pending} cosas por preparar en la lista de TripCTRL.` : '', trip.start);
+    if (trip.region === 'world') {
+      add(trip, 'docs', `Revisar pasaporte, visados y vacunas · ${trip.name}`, addDaysToISO(trip.start, -30), 2, 'Mira la pestaña Papeles de TripCTRL.', trip.start);
+    } else if (trip.region === 'eu') {
+      add(trip, 'docs', `Revisar DNI o pasaporte y la tarjeta sanitaria europea · ${trip.name}`, addDaysToISO(trip.start, -7), 2, 'Mira la pestaña Papeles de TripCTRL.', trip.start);
+    }
+  }
+  return out;
+}
+
+// Junta las tareas de los viajes con las de aquí. Devuelve si ha cambiado algo.
+function applyTripTasks(trips) {
+  const want = tripTaskList(trips);
+  const wantIds = new Set(want.map((w) => w.id));
+  let changed = false;
+  for (const w of want) {
+    if (data.deleted[w.id]) continue; // la borraste a mano: no vuelve
+    const gen = JSON.stringify([w.title, w.due, w.prio, w.notes]);
+    const t = data.tasks.find((x) => x.id === w.id);
+    if (!t) {
+      data.tasks.push({ id: w.id, title: w.title, prio: w.prio, due: w.due, notes: w.notes, repeat: false, lead: DEFAULT_LEAD,
+        done: false, doneAt: 0, created: Date.now(), src: 'trip', trip: w.trip, gen });
+      changed = true;
+    } else if (t.gen !== gen || t.trip !== w.trip) {
+      // El viaje ha cambiado: se actualiza (si cambia la fecha, vuelve a estar pendiente)
+      if (t.due !== w.due) { t.done = false; t.doneAt = 0; }
+      Object.assign(t, { title: w.title, prio: w.prio, due: w.due, notes: w.notes, trip: w.trip, gen });
+      changed = true;
+    }
+  }
+  // Reservas quitadas o viajes borrados: fuera sus tareas pendientes (las hechas se quedan en «Hechas»)
+  const before = data.tasks.length;
+  data.tasks = data.tasks.filter((t) => t.src !== 'trip' || t.done || wantIds.has(t.id));
+  if (data.tasks.length !== before) changed = true;
+  if (changed) { persist(); render(); }
+  return changed;
+}
+
+async function refreshTrips({ interactive = false } = {}) {
+  if (!sync || !tripLink || tripBusy) return false;
+  tripBusy = true;
+  try {
+    const out = await syncCall('peer-pull', { peer: { user: tripLink.user, auth: tripLink.auth } });
+    const trip = out.blob ? await decryptData(out.blob, tripLink) : { trips: [] };
+    applyTripTasks(trip.trips || []);
+    tripLink.at = Date.now();
+    tripLink.trips = (trip.trips || []).filter((t) => t.end >= todayISO()).length;
+    save(TRIP_LINK_KEY, tripLink);
+    tripError = '';
+    return true;
+  } catch (err) {
+    console.warn(err);
+    tripError = tripErrorText(err);
+    if (interactive) toast(tripError);
+    return false;
+  } finally {
+    tripBusy = false;
+  }
+}
+
+function openTripSheet() {
+  const sheet = openSheet('tall', 'Vincular con TripCTRL');
+  const draw = () => {
+    const head = `
+      <div class="sheet-head">
+        <h2 class="sheet-title">Vincular con TripCTRL</h2>
+        <button type="button" class="icon-btn sm" data-close aria-label="Cerrar">${icon('close', 18)}</button>
+      </div>
+      <p class="muted small">TaskCTRL lee tus viajes de TripCTRL y crea solas las tareas de cada reserva: sacar la tarjeta de embarque la víspera del vuelo, recoger y devolver el coche, confirmar el alojamiento, llevar las entradas, hacer la maleta y revisar los documentos.</p>`;
+    if (!sync) {
+      sheet.innerHTML = `${head}
+        <p class="muted small">Primero activa la <b>sincronización en la nube</b> aquí, con el mismo usuario que usas en TripCTRL.</p>
+        <div class="body-actions"><button class="done-btn" type="button" data-go-sync>${icon('cloud', 17)} Ir a la nube</button></div>`;
+      return;
+    }
+    const n = data.tasks.filter((t) => t.src === 'trip' && !t.done).length;
+    sheet.innerHTML = `${head}
+      ${tripLink ? `
+        <div class="notif-status ${tripError ? 'bad' : 'ok'}">${icon('plane', 22)}<span><b>Vinculado como ${esc(tripLink.username)}</b><small>${esc(tripError || (tripLink.at ? `${plural(tripLink.trips || 0, 'viaje próximo', 'viajes próximos')} · ${plural(n, 'tarea pendiente', 'tareas pendientes')} · actualizado ${new Date(tripLink.at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}` : 'Pendiente'))}</small></span></div>
+        <p class="muted small">Se actualiza al abrir la app. Si cambias una reserva en TripCTRL, su tarea cambia; si la quitas, desaparece. Puedes editar o borrar estas tareas como cualquier otra: las que borres no vuelven.</p>
+        <div class="row-btns">
+          <button class="done-btn" type="button" data-now>${icon('refresh', 17)} Actualizar ahora</button>
+          <a class="ghost-btn" href="${TRIP_APP_URL}" target="_blank" rel="noopener">${icon('plane', 17)} Abrir TripCTRL</a>
+          <button class="ghost-btn danger" type="button" data-off>Desvincular</button>
+        </div>` : `
+        <p class="muted small">Se usará la cuenta de la nube <b>${esc(sync.username)}</b>: introduce la contraseña de TripCTRL de ese mismo usuario. No se guarda: solo sirve para derivar aquí la clave que descifra tus viajes.</p>
+        <label class="fld"><span>Contraseña de TripCTRL</span><input id="l-pass" type="password" autocomplete="current-password" maxlength="128" /></label>
+        <p class="form-error" id="l-err" role="alert"></p>
+        <div class="body-actions"><button class="done-btn" type="button" data-go>Vincular</button></div>`}`;
+    sheet.querySelector('#l-pass')?.focus();
+  };
+  draw();
+  sheet.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-close]')) return closeSheet();
+    if (e.target.closest('[data-go-sync]')) return openSyncSheet();
+    if (e.target.closest('[data-now]')) { await refreshTrips({ interactive: true }); return draw(); }
+    if (e.target.closest('[data-off]')) {
+      if (!confirm('¿Desvincular de TripCTRL? Las tareas ya creadas se quedan, pero dejarán de actualizarse con tus viajes.')) return;
+      tripLink = null;
+      tripError = '';
+      try { localStorage.removeItem(TRIP_LINK_KEY); } catch (_) {}
+      draw();
+      return toast('Desvinculado de TripCTRL');
+    }
+    const go = e.target.closest('[data-go]');
+    if (go) {
+      const pass = sheet.querySelector('#l-pass').value;
+      if (!pass) return void (sheet.querySelector('#l-err').textContent = 'Introduce la contraseña.');
+      go.disabled = true;
+      go.textContent = 'Un momento…';
+      tripLink = await deriveTripAccount(sync.username, pass);
+      if (await refreshTrips()) {
+        const n = data.tasks.filter((t) => t.src === 'trip' && !t.done).length;
+        toast(n ? `Vinculado: ${plural(n, 'tarea creada', 'tareas creadas')} de tus viajes` : 'Vinculado con TripCTRL');
+        draw();
+      } else {
+        const msg = tripError;
+        tripLink = load(TRIP_LINK_KEY, null);
+        draw();
+        sheet.querySelector('#l-err').textContent = msg;
+      }
+    }
+  });
+}
+
 // ---------- Tono del lenguaje (menú ⋯) ----------
 
 function openToneSheet() {
@@ -1076,6 +1268,7 @@ if (DONATE_URL) {
 const MENU = [
   { label: 'Avisos', icon: 'bell', run: () => openNotifSheet() },
   { label: 'Sincronización en la nube', icon: 'cloud', run: () => openSyncSheet() },
+  { label: 'Vincular con TripCTRL', icon: 'plane', run: () => openTripSheet() },
   { label: 'Tono del lenguaje', icon: 'chat', run: () => openToneSheet() },
   { label: 'Opciones de visualización', icon: 'palette', run: () => openDisplaySheet() },
   { label: 'Exportar copia', icon: 'download', run: () => exportBackup() },
@@ -1271,7 +1464,7 @@ render();
 // La fecha cambia a medianoche y con la app en segundo plano: se repinta al volver
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  adoptIDBState().then(() => { render(); syncNow(); });
+  adoptIDBState().then(() => { render(); syncNow().then(() => refreshTrips()); });
   refreshSchedule();
 });
 
@@ -1283,7 +1476,7 @@ if ('serviceWorker' in navigator) {
 (async () => {
   try { meta = (await kvGet('meta')) || {}; } catch (_) { meta = {}; }
   await adoptIDBState();
-  syncNow();
+  syncNow().then(() => refreshTrips());
   // Si el permiso sigue concedido, renueva la suscripción y las horas de los próximos días
   if (data.settings.on && canPush() && Notification.permission === 'granted') {
     if (meta.subscribed) refreshSchedule();

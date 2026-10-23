@@ -5,6 +5,7 @@
 //   POST /api/sync { action: 'register', user, auth, invite }  -> crea la cuenta (requiere la clave de registro)
 //   POST /api/sync { action: 'pull', user, auth }              -> { rev, blob, at }
 //   POST /api/sync { action: 'push', user, auth, blob, baseRev } -> { rev } | 409 { rev }
+//   POST /api/sync { action: 'peer-pull', user, auth, peer: { user, auth } } -> datos cifrados de TripCTRL
 //
 // `user` = SHA-256 del nombre de usuario y `auth` = clave derivada de la contraseña (PBKDF2),
 // ambos calculados en el dispositivo. El servidor solo guarda el SHA-256 de `auth`.
@@ -135,6 +136,27 @@ module.exports = async (req, res) => {
       const [ok, rev] = await redis('EVAL', PUSH_SCRIPT, 1, key, baseRev, blob, Date.now());
       if (!ok) return res.status(409).json({ error: 'conflict', rev });
       return res.status(200).json({ rev });
+    }
+
+    // ----- Vínculo con TripCTRL: leer sus viajes (cifrados) desde esta app -----
+    // Requiere estar identificado en esta app y además las credenciales de la cuenta de TripCTRL
+    // (derivadas en el dispositivo con el mismo usuario y su contraseña). Las dos apps deben usar la
+    // misma base de datos Upstash; sus claves no se mezclan («trip:» / «tsk:»).
+    if (action === 'peer-pull') {
+      const peer = body.peer || {};
+      if (!HEX64.test(peer.user || '') || !HEX64.test(peer.auth || '')) return res.status(400).json({ error: 'bad-request' });
+      const pKey = `trip:acct:${peer.user}`;
+      const pFail = `trip:fail:${peer.user}`;
+      if ((Number(await redis('GET', pFail)) || 0) >= MAX_FAILS) return res.status(429).json({ error: 'too-many' });
+      const pv = await redis('HGET', pKey, 'verifier');
+      if (!pv) return res.status(404).json({ error: 'peer-missing' });
+      if (!sameHex(pv, await sha256hex(peer.auth))) {
+        await redis('INCR', pFail);
+        await redis('EXPIRE', pFail, FAIL_WINDOW_S);
+        return res.status(401).json({ error: 'peer-auth' });
+      }
+      const [rev, blob, at] = await redis('HMGET', pKey, 'rev', 'blob', 'at');
+      return res.status(200).json({ rev: Number(rev) || 0, blob: blob || null, at: Number(at) || null });
     }
 
     return res.status(400).json({ error: 'bad-action' });
