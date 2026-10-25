@@ -3,23 +3,26 @@
 // Sin DOM: el service worker lo carga con importScripts.
 'use strict';
 
-// Escala de prioridad, de la más alta (4) a la más baja (0). Los nombres dependen del tono (TONES).
+// Escala de prioridad: alta (2), media (1) y baja (0). Los nombres dependen del tono (TONES).
+// Hasta la v0.7 había 5 niveles (0–4); `migratePrio` los convierte.
 // `every`: minutos entre avisos dentro del horario; `daily`: un aviso al día por la tarde.
+const TOP = 2;
 const PRIOS = [
-  { lvl: 4, freq: 'Aviso cada hora', dot: '🔴', every: 60 },
-  { lvl: 3, freq: 'Aviso cada 3 horas', dot: '🟠', every: 180 },
-  { lvl: 2, freq: 'Aviso cada 6 horas', dot: '🟡', every: 360 },
-  { lvl: 1, freq: 'Un aviso al día', dot: '🟢', daily: true },
-  { lvl: 0, freq: 'Solo en el resumen de la mañana', dot: '🔵' },
+  { lvl: 2, freq: 'Aviso cada hora', dot: '🔴', every: 60 },
+  { lvl: 1, freq: 'Aviso cada 3 horas', dot: '🟠', every: 180 },
+  { lvl: 0, freq: 'Un aviso al día', dot: '🟢', daily: true },
 ];
-const PRIO = (lvl) => PRIOS[4 - lvl];
+// De la escala antigua de 5 a la de 3: «Pa' ayer» → alta; «No olvides esto» y «Que no se te pase» → media;
+// «Tranqui» y «Si eso, ya tal» → baja
+const migratePrio = (old) => [0, 0, 1, 1, 2][Math.max(0, Math.min(4, Math.round(Number(old)) || 0))];
+const PRIO = (lvl) => PRIOS[TOP - lvl];
 
-// Tono del lenguaje (menú ⋯ → Tono del lenguaje). `prios`: [nombre, explicación] de la 4 a la 0.
+// Tono del lenguaje (menú ⋯ → Tono del lenguaje). `prios`: [nombre, explicación] de la alta a la baja.
 const TONES = {
   calle: {
     label: 'De la calle',
     sample: "«Pa' ayer, bro»",
-    prios: [["Pa' ayer, bro", 'Urgente de verdad'], ['No olvides esto, bro', 'Importante'], ['Que no se te pase', 'Tenlo en el radar'], ['Tranqui, sin agobios', 'Cuando puedas'], ['Si eso, ya tal', 'Algún día']],
+    prios: [["Pa' ayer, bro", 'Urgente de verdad'], ['No olvides esto, bro', 'Importante'], ['Tranqui, sin agobios', 'Cuando puedas']],
     things: (n) => (n === 1 ? 'cosa pendiente' : 'cosas pendientes'),
     doneMsgs: ['¡Hecho, máquina!', 'Uno menos, crack', 'Fuera de la lista 💪', 'Eso es, bro', 'Tachada. Así se hace'],
     added: 'Apuntada',
@@ -40,7 +43,7 @@ const TONES = {
   estandar: {
     label: 'Estándar',
     sample: '«Urgente»',
-    prios: [['Urgente', 'Hay que hacerlo ya'], ['Importante', 'No lo dejes pasar'], ['Normal', 'Tenlo presente'], ['Cuando puedas', 'Sin prisa'], ['Algún día', 'Sin plazo concreto']],
+    prios: [['Urgente', 'Hay que hacerlo ya'], ['Importante', 'No lo dejes pasar'], ['Cuando puedas', 'Sin prisa']],
     things: (n) => (n === 1 ? 'tarea pendiente' : 'tareas pendientes'),
     doneMsgs: ['Tarea completada', '¡Bien hecho!', 'Hecho'],
     added: 'Tarea añadida',
@@ -60,8 +63,8 @@ const TONES = {
   },
   formal: {
     label: 'Formal',
-    sample: '«Prioridad máxima»',
-    prios: [['Prioridad máxima', 'Requiere atención inmediata'], ['Prioridad alta', 'Requiere atención próxima'], ['Prioridad media', 'Atención ordinaria'], ['Prioridad baja', 'Puede posponerse'], ['Sin urgencia', 'Sin plazo definido']],
+    sample: '«Prioridad alta»',
+    prios: [['Prioridad alta', 'Requiere atención inmediata'], ['Prioridad media', 'Requiere atención próxima'], ['Prioridad baja', 'Puede posponerse']],
     things: (n) => (n === 1 ? 'tarea pendiente' : 'tareas pendientes'),
     doneMsgs: ['Tarea completada correctamente'],
     added: 'Tarea registrada',
@@ -81,13 +84,13 @@ const TONES = {
   },
 };
 const toneOf = (state) => TONES[state && state.settings && state.settings.tone] || TONES.calle;
-const prioName = (lvl, tone) => tone.prios[4 - lvl][0];
-const prioHint = (lvl, tone) => tone.prios[4 - lvl][1];
+const prioName = (lvl, tone) => tone.prios[TOP - lvl][0];
+const prioHint = (lvl, tone) => tone.prios[TOP - lvl][1];
 
 const DEFAULT_SETTINGS = { on: false, morning: '08:30', end: 22, tone: 'calle' };
 const HORIZON_DAYS = 7;   // se programan los avisos de los próximos 7 días
 const MAX_SLOTS = 400;
-const DAILY_AFTER_H = 9;  // el aviso diario de «Tranqui» llega 9 h después del resumen
+const DAILY_AFTER_H = 9;  // el aviso diario de la prioridad baja llega 9 h después del resumen
 const EVENING_BEFORE_MIN = 30; // el aviso de lo de mañana llega 30 min antes de la hora de corte
 const LEAD_OPTIONS = [7, 14, 30, 60]; // días de antelación con los que reaparece una tarea anual
 const DEFAULT_LEAD = 30;
@@ -137,7 +140,7 @@ function sortTasks(list) {
 
 // Prioridad efectiva para avisar: sube un nivel el día que vence y si ya está vencida
 function effLevel(task, dayISO) {
-  return task.due && task.due <= dayISO ? Math.min(4, task.prio + 1) : task.prio;
+  return task.due && task.due <= dayISO ? Math.min(TOP, task.prio + 1) : task.prio;
 }
 
 // Momentos de aviso entre `from` y `to` (ms): [{ t, kind: 'morning'|'remind'|'evening', ids: [...] }]

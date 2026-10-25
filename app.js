@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.7.2';
+const APP_VERSION = '0.8.0';
 // Página de donaciones (Ko-fi), la misma que en Up to 40%. Vacía: no se muestra el botón «Invítame a un café».
 const DONATE_URL = 'https://ko-fi.com/omtapps';
 const STORAGE_KEY = 'taskctrl:v1';
@@ -120,8 +120,9 @@ function dueLabel(due) {
 // Se copia también en IndexedDB para que el service worker pueda componer los avisos.
 
 function cleanData(d) {
-  const out = { tasks: [], deleted: {}, settings: { ...DEFAULT_SETTINGS }, upd: 0 };
+  const out = { scale: 3, tasks: [], deleted: {}, settings: { ...DEFAULT_SETTINGS }, upd: 0 };
   if (!d || typeof d !== 'object') return out;
+  const oldScale = d.scale !== 3; // datos de antes de la v0.8 (5 prioridades)
   const limit = Date.now() - KEEP_DONE_DAYS * 864e5;
   for (const t of Array.isArray(d.tasks) ? d.tasks : []) {
     if (!t || !t.id || !String(t.title || '').trim()) continue;
@@ -129,7 +130,7 @@ function cleanData(d) {
     out.tasks.push({
       id: String(t.id),
       title: String(t.title).trim(),
-      prio: Math.max(0, Math.min(4, Math.round(Number(t.prio)) || 0)),
+      prio: oldScale ? migratePrio(t.prio) : Math.max(0, Math.min(TOP, Math.round(Number(t.prio)) || 0)),
       due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || '') ? t.due : '',
       notes: String(t.notes || ''),
       repeat: !!t.repeat,
@@ -440,7 +441,7 @@ function dateShortcuts() {
 
 function openEditor(id) {
   const t = id ? data.tasks.find((x) => x.id === id) : null;
-  const draft = { title: t?.title || '', prio: t ? t.prio : 2, due: t?.due || '', notes: t?.notes || '', repeat: !!t?.repeat, lead: t?.lead || DEFAULT_LEAD };
+  const draft = { title: t?.title || '', prio: t ? t.prio : 1, due: t?.due || '', notes: t?.notes || '', repeat: !!t?.repeat, lead: t?.lead || DEFAULT_LEAD };
   const sheet = openSheet('tall', t ? 'Editar tarea' : 'Nueva tarea');
   sheet.innerHTML = `
     <div class="sheet-head">
@@ -529,7 +530,7 @@ function openEditor(id) {
       const back = new Date(`${task.due}T12:00:00`);
       back.setDate(back.getDate() - task.lead);
       toast(`Guardada en Programadas: vuelve a la lista el ${fmtISO(isoOf(back))}`);
-    } else if (!t) toast(draft.prio === 4 ? TT().addedTop : TT().added);
+    } else if (!t) toast(draft.prio === TOP ? TT().addedTop : TT().added);
   });
   sheet.querySelector('#ed-delete')?.addEventListener('click', () => {
     if (!confirm(`¿Eliminar «${t.title}»?`)) return;
@@ -878,7 +879,7 @@ async function syncNow({ interactive = false } = {}) {
         render();
       }
       // Y lo nuevo de aquí se sube
-      const mine = { tasks: data.tasks, deleted: data.deleted };
+      const mine = { scale: 3, tasks: data.tasks, deleted: data.deleted };
       if (remote.blob && syncSig(mine) === syncSig(cloud)) break;
       try {
         await syncCall('push', { blob: await encryptData(mine), baseRev: remote.rev });
@@ -1039,30 +1040,30 @@ function tripTaskList(trips) {
       const name = p.title || '';
       const label = (s) => (name ? `${s} · ${name}` : s);
       if (p.kind === 'flight') {
-        add(trip, `${p.id}-boarding`, label('Hacer el check-in y sacar la tarjeta de embarque'), addDaysToISO(p.date, -1), 3,
+        add(trip, `${p.id}-boarding`, label('Hacer el check-in y sacar la tarjeta de embarque'), addDaysToISO(p.date, -1), 1,
           `Vuelo el ${fmtISO(p.date)}${at(p) ? ` ${at(p)}` : ''}. El check-in online suele abrir 24–48 h antes.`, p.date);
       } else if (p.kind === 'train') {
-        add(trip, `${p.id}-ticket`, label('Tener a mano el billete'), addDaysToISO(p.date, -1), 2,
+        add(trip, `${p.id}-ticket`, label('Tener a mano el billete'), addDaysToISO(p.date, -1), 1,
           `Sale el ${fmtISO(p.date)}${at(p) ? ` ${at(p)}` : ''}.`, p.date);
       } else if (p.kind === 'car') {
-        add(trip, `${p.id}-pickup`, label('Recoger el coche de alquiler (lleva carnet y tarjeta de crédito)'), p.date, 3,
+        add(trip, `${p.id}-pickup`, label('Recoger el coche de alquiler (lleva carnet y tarjeta de crédito)'), p.date, 1,
           `Recogida${at(p) ? ` ${at(p)}` : ''}${p.until ? `. Devolución el ${fmtISO(p.until)}` : ''}.`, p.date);
-        if (p.until) add(trip, `${p.id}-return`, label('Devolver el coche de alquiler (con el depósito como toque)'), p.until, 3, at(p), p.until);
+        if (p.until) add(trip, `${p.id}-return`, label('Devolver el coche de alquiler (con el depósito como toque)'), p.until, 1, at(p), p.until);
       } else if (p.kind === 'hotel') {
-        add(trip, `${p.id}-confirm`, label('Confirmar la reserva del alojamiento y la hora de llegada'), addDaysToISO(p.date, -2), 1,
+        add(trip, `${p.id}-confirm`, label('Confirmar la reserva del alojamiento y la hora de llegada'), addDaysToISO(p.date, -2), 0,
           `Entrada el ${fmtISO(p.date)}${at(p) ? ` ${at(p)}` : ''}.`, p.date);
       } else if (p.kind === 'activity' && (p.ref || p.cost)) {
-        add(trip, `${p.id}-tickets`, label('Llevar las entradas'), p.date, 2, at(p), p.date);
+        add(trip, `${p.id}-tickets`, label('Llevar las entradas'), p.date, 1, at(p), p.date);
       }
     }
     // Del viaje entero
     const pending = (trip.pack || []).filter((x) => !x.done).length;
-    add(trip, 'pack', `Hacer la maleta · ${trip.name}`, addDaysToISO(trip.start, -1), 3,
+    add(trip, 'pack', `Hacer la maleta · ${trip.name}`, addDaysToISO(trip.start, -1), 1,
       pending ? `Quedan ${pending} cosas por preparar en la lista de TripCTRL.` : '', trip.start);
     if (trip.region === 'world') {
-      add(trip, 'docs', `Revisar pasaporte, visados y vacunas · ${trip.name}`, addDaysToISO(trip.start, -30), 2, 'Mira la pestaña Papeles de TripCTRL.', trip.start);
+      add(trip, 'docs', `Revisar pasaporte, visados y vacunas · ${trip.name}`, addDaysToISO(trip.start, -30), 1, 'Mira la pestaña Papeles de TripCTRL.', trip.start);
     } else if (trip.region === 'eu') {
-      add(trip, 'docs', `Revisar DNI o pasaporte y la tarjeta sanitaria europea · ${trip.name}`, addDaysToISO(trip.start, -7), 2, 'Mira la pestaña Papeles de TripCTRL.', trip.start);
+      add(trip, 'docs', `Revisar DNI o pasaporte y la tarjeta sanitaria europea · ${trip.name}`, addDaysToISO(trip.start, -7), 1, 'Mira la pestaña Papeles de TripCTRL.', trip.start);
     }
   }
   return out;
@@ -1196,7 +1197,7 @@ function openToneSheet() {
         ${Object.entries(TONES).map(([k, tn]) => `
           <button type="button" class="tone-opt ${cur === k ? 'on' : ''}" data-tone="${k}" aria-pressed="${cur === k}">
             <span class="tone-head"><b>${esc(tn.label)}</b>${cur === k ? icon('check', 18, 2) : ''}</span>
-            <span class="tone-pills">${PRIOS.slice(0, 3).map((p) => `<span class="prio-pill p${p.lvl}">${esc(prioName(p.lvl, tn))}</span>`).join('')}</span>
+            <span class="tone-pills">${PRIOS.map((p) => `<span class="prio-pill p${p.lvl}">${esc(prioName(p.lvl, tn))}</span>`).join('')}</span>
             <small>${esc(tn.doneMsgs[0])} · ${esc(tn.nothing)}</small>
           </button>`).join('')}
       </div>

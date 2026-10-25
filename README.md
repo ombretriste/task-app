@@ -2,7 +2,7 @@
 
 *by OmT Finance*
 
-Versión **0.7.2** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
+Versión **0.8.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
 
 App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prioridad, ordenadas por prioridad, con un tic de «hecha» y avisos que se repiten más a menudo cuanto más urgente es la tarea.
 
@@ -22,15 +22,13 @@ App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prio
   - Del viaje: hacer la maleta la víspera; revisar DNI/pasaporte y tarjeta sanitaria europea 7 días antes (Europa) o pasaporte, visados y vacunas 30 días antes (resto del mundo).
   
   Se actualizan al abrir la app: si cambia la reserva, cambia la tarea (y vuelve a pendiente si cambia la fecha); si se quita, desaparece. Se pueden editar o borrar como cualquier otra; las borradas no vuelven. TripCTRL no se modifica.
-- **Tono del lenguaje** (menú ⋯): *De la calle* (el de siempre), *Estándar* (Urgente · Importante · Normal · Cuando puedas · Algún día) o *Formal* (Prioridad máxima · alta · media · baja · Sin urgencia). Cambia los nombres de las prioridades, los mensajes y el texto de los avisos; es de cada dispositivo.
-- **Prioridades** (colores neón; nombres del tono *De la calle*):
-  - 🔴 *Pa' ayer, bro* — aviso cada hora.
-  - 🟠 *No olvides esto, bro* — cada 3 horas.
-  - 🟡 *Que no se te pase* — cada 6 horas.
-  - 🟢 *Tranqui, sin agobios* — un aviso al día (por la tarde).
-  - 🔵 *Si eso, ya tal* — solo en el resumen de la mañana.
+- **Tono del lenguaje** (menú ⋯): *De la calle* (el de siempre), *Estándar* (Urgente · Importante · Cuando puedas) o *Formal* (Prioridad alta · media · baja). Cambia los nombres de las prioridades, los mensajes y el texto de los avisos; es de cada dispositivo.
+- **Prioridades** (tres, con colores neón; nombres del tono *De la calle*):
+  - 🔴 Alta, *Pa' ayer, bro* — aviso cada hora.
+  - 🟠 Media, *No olvides esto, bro* — cada 3 horas.
+  - 🟢 Baja, *Tranqui, sin agobios* — un aviso al día (por la tarde).
   
-  El día que vence una tarea, y si ya está vencida, sube un nivel.
+  El día que vence una tarea, y si ya está vencida, sube un nivel. Hasta la v0.7 había cinco; al abrir la v0.8 las tareas se convierten solas («Que no se te pase» pasa a media y «Si eso, ya tal», a baja).
 - **Avisos** (menú ⋯ → Avisos): a la hora del resumen (08:30 por defecto) llega uno con las tareas del día: las que vencen hoy, las vencidas y las que no tienen fecha. Durante el día, esas tareas avisan según su prioridad hasta la hora de corte (22:00 por defecto). Las tareas con fecha futura no avisan hasta su día: la víspera, media hora antes de la hora de corte (o un poco antes si coincide con otro aviso), llega uno con lo que vence mañana. En Android, la notificación de una sola tarea tiene el botón «✓ Hecho».
 - **Sincronización en la nube** (menú ⋯): cuenta con usuario y contraseña (crearla pide la misma clave de registro que UnderCTRL y PayCTRL) para tener las tareas en varios dispositivos. Se cifran en el dispositivo (PBKDF2 + AES-256-GCM) antes de subirse a `api/sync`; el servidor solo guarda un bloque ilegible. Si se cambian cosas en dos dispositivos a la vez se fusionan tarea a tarea (gana el cambio más reciente de cada una y los borrados se respetan). Los avisos y su horario se configuran en cada dispositivo.
 - **Invítame a un café**: al final de la pantalla, un botón discreto lleva a la página de donaciones (ko-fi.com/omtapps), igual que en Up to 40%. En el iPhone con la app instalada intenta abrirla en Safari, donde funciona el pago.
