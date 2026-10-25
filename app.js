@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.7.1';
+const APP_VERSION = '0.7.2';
 // Página de donaciones (Ko-fi), la misma que en Up to 40%. Vacía: no se muestra el botón «Invítame a un café».
 const DONATE_URL = 'https://ko-fi.com/omtapps';
 const STORAGE_KEY = 'taskctrl:v1';
@@ -1457,6 +1457,17 @@ document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: fals
 
 // Pide al navegador que no borre los datos guardados si falta espacio
 navigator.storage?.persist?.().catch(() => {});
+
+// ---------- Difuminado del contenido sobre el botón Nueva tarea (como en Up to 40%) ----------
+function updateFade() {
+  const barTop = $('add-btn').getBoundingClientRect().top - 10; // un poco por encima del botón
+  for (const el of document.querySelectorAll('main > *')) {
+    el.style.setProperty('--fade-b', `${Math.round(barTop - el.getBoundingClientRect().top)}px`);
+  }
+}
+window.addEventListener('scroll', updateFade, { passive: true });
+window.addEventListener('resize', updateFade);
+new ResizeObserver(updateFade).observe(document.querySelector('main'));
 
 applyDisplay();
 render();

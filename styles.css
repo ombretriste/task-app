@@ -186,7 +186,7 @@ body.entering .sp-top, body.entering .sp-bottom { animation: splash-content .35s
 /* ---------- App ---------- */
 .app {
   --top-h: calc(58px + env(safe-area-inset-top));
-  --bottom-h: calc(68px + env(safe-area-inset-bottom));
+  --bottom-h: calc(62px + env(safe-area-inset-bottom) * 0.7); /* botón Nueva tarea pegado abajo (en el iPhone, sobre la rayita de inicio) */
   max-width: 1100px;
   margin: 0 auto;
   padding-bottom: calc(var(--bottom-h) + 16px);
@@ -597,10 +597,11 @@ main {
 /* Barra inferior con el botón Añadir */
 .bottombar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; height: var(--bottom-h);
-  display: flex; align-items: center; justify-content: center; padding: 0 16px env(safe-area-inset-bottom);
-  background: var(--bar-bg); -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
-  border-top: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center; padding: 0 16px;
+  /* Como en Up to 40%: sin cuadro, se ve el fondo y solo flota el botón */
+  background: transparent; pointer-events: none;
 }
+.bottombar > * { pointer-events: auto; }
 .add-btn {
   display: inline-flex; align-items: center; gap: 8px; padding: 12px 28px; border: 0; border-radius: 999px;
   background: var(--grad-strong); color: #fff; font-size: 16px; font-weight: 600;
@@ -716,9 +717,14 @@ main {
 /* iPhone (pantalla completa): iOS difumina una franja justo debajo de la barra de estado (hora,
    batería). Se baja la barra superior para que el título y los iconos queden fuera. */
 @supports (padding-top: env(safe-area-inset-top)) {
-  .topbar { padding-top: calc(env(safe-area-inset-top) + 14px); }
-  .app { --top-h: calc(72px + env(safe-area-inset-top)); } /* la barra crece lo mismo: el botón no toca la línea */
+  /* Como en Up to 40%: con el texto a ~14 px de la hora se ve difuminado por arriba; a ~19 px,
+     limpio. Queda a ~17 px, lo más arriba posible sin que se corte. */
+  .topbar { padding-top: calc(env(safe-area-inset-top) + 11px); padding-bottom: 7px; }
+  .app { --top-h: calc(52px + env(safe-area-inset-top)); }
 }
+/* Botón ⋯ más pequeño, centrado con el título y separado de la línea de debajo */
+.topbar .icon-btn { width: 34px; height: 34px; flex-basis: 34px; }
+.topbar .brand { line-height: 1; }
 
 /* ---------- Invítame a un café ---------- */
 .donate-pill {
@@ -764,3 +770,12 @@ main {
 
 /* Enlaces con aspecto de botón */
 a.ghost-btn { text-decoration: none; color: inherit; }
+
+/* Como en Up to 40% y UnderCTRL: el contenido se difumina hasta desaparecer antes de llegar al
+   botón «Nueva tarea». --fade-b (borde superior del botón, en coordenadas de cada bloque) lo
+   calcula app.js al desplazar. */
+main { padding-bottom: 28px; }
+main > * {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(var(--fade-b, 100000px) - 44px), transparent calc(var(--fade-b, 100000px) + 2px));
+  mask-image: linear-gradient(to bottom, #000 calc(var(--fade-b, 100000px) - 44px), transparent calc(var(--fade-b, 100000px) + 2px));
+}
