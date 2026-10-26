@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.8.1';
+const APP_VERSION = '0.8.2';
 // Página de donaciones (Ko-fi), la misma que en Up to 40%. Vacía: no se muestra el botón «Invítame a un café».
 const DONATE_URL = 'https://ko-fi.com/omtapps';
 const STORAGE_KEY = 'taskctrl:v1';
@@ -1394,7 +1394,7 @@ document.querySelector('main').addEventListener('click', (e) => {
 // Sin botón Entrar: el logo aparece (el arco se dibuja), se ve un instante y se pasa sola a la app
 // con la transición de cristal, como en ChatCTRL.
 const SPLASH_HOLD_MS = 1700;
-const SPLASH_OUT_MS = 800;
+const SPLASH_OUT_MS = 1200;
 function enterApp() {
   const body = document.body;
   if (!$('splash') || body.classList.contains('entering')) return;
