@@ -1,7 +1,11 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.8.4';
+const APP_VERSION = '0.9.0';
+// Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
+// página virtual. Solo se envía el nombre de la función, nunca datos de la app.
+const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
+const trackLabel = (label) => track(`/${label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`);
 // Página de donaciones (Ko-fi), la misma que en Up to 40%. Vacía: no se muestra el botón «Invítame a un café».
 const DONATE_URL = 'https://ko-fi.com/omtapps';
 const STORAGE_KEY = 'taskctrl:v1';
@@ -1218,6 +1222,7 @@ function openToneSheet() {
 
 // ---------- Invítame a un café ----------
 function openDonateSheet() {
+  track('/cafe');
   closeSheet();
   // En el iPhone con la app instalada, iOS abre los enlaces en un navegador interno donde el
   // pago de Ko-fi falla: se intenta abrir Safari y, si no se puede, se explica cómo pasar a él.
@@ -1282,6 +1287,7 @@ function openMenu() {
     `<button class="menu-item" role="menuitem" data-i="${i}">${icon(m.icon, 20)}<span>${m.label}</span></button>`).join('');
   menu.querySelectorAll('.menu-item').forEach((b) => b.addEventListener('click', () => {
     closeMenu();
+    trackLabel(MENU[b.dataset.i].label);
     MENU[b.dataset.i].run();
   }));
   const r = $('menu-btn').getBoundingClientRect();
