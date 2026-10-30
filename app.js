@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.9.2';
+const APP_VERSION = '0.10.0';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca datos de la app.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -18,6 +18,7 @@ const KEEP_DONE_DAYS = 30; // las tareas hechas se borran solas pasado un mes
 const KEEP_DELETED_DAYS = 90; // cuánto se recuerda un borrado (para que la nube no lo resucite)
 
 const ICONS = {
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r=".9" fill="currentColor" stroke="none"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
@@ -1279,6 +1280,7 @@ const MENU = [
   { label: 'Opciones de visualización', icon: 'palette', run: () => openDisplaySheet() },
   { label: 'Exportar copia', icon: 'download', run: () => exportBackup() },
   { label: 'Importar copia', icon: 'upload', run: () => $('import-input').click() },
+  { label: 'Información', icon: 'info', run: () => openInfoSheet() },
 ];
 
 function openMenu() {
@@ -1309,6 +1311,24 @@ document.addEventListener('click', (e) => {
   if (!$('menu').hidden && !e.target.closest('#menu')) closeMenu();
 });
 window.addEventListener('resize', closeMenu);
+
+function openInfoSheet() {
+  closeSheet();
+  const back = document.createElement('div');
+  back.className = 'sheet-backdrop center';
+  back.innerHTML = `
+    <div class="sheet info-sheet" role="dialog" aria-modal="true" aria-label="Información">
+      <span class="install-logo">${logoSVG(56)}</span>
+      <h2 class="sheet-title">TaskCTRL</h2>
+      <p class="small muted">Versión ${APP_VERSION} · by OmT Finance</p>
+      <p class="small">Apunta tareas con fecha límite y prioridad. Cuanto más urgente, más a menudo te lo recuerda.</p>
+      <p class="small muted">Tus tareas se guardan en este dispositivo. Con la sincronización en la nube activada, se cifran en tu dispositivo antes de subirse.</p>
+      <div class="info-actions"><button type="button" class="done-btn" data-close>Cerrar</button></div>
+    </div>`;
+  document.body.append(back);
+  back.addEventListener('click', (e) => { if (e.target === back) closeSheet(); });
+  back.querySelector('[data-close]').addEventListener('click', closeSheet);
+}
 
 // ---------- Opciones de visualización (modo y fondo) ----------
 
