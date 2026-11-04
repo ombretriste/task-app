@@ -2,7 +2,7 @@
 
 *by OmT Finance*
 
-Versión **0.10.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
+Versión **0.10.1** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
 
 App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prioridad, ordenadas por prioridad, con un tic de «hecha» y avisos que se repiten más a menudo cuanto más urgente es la tarea.
 
@@ -54,6 +54,10 @@ Sin servidor, la app avisa solo mientras está abierta. En iPhone/iPad los aviso
 4. Crea un cron gratuito en [cron-job.org](https://cron-job.org) que abra `https://<tu-app>.vercel.app/api/push?run` cada 5 minutos. (El cron de Vercel en el plan gratuito solo permite una vez al día.)
 
 Las claves VAPID se generan solas la primera vez y se guardan en Redis (`tsk:vapid`).
+
+## Seguridad
+
+- **Política de seguridad (CSP) y cabeceras** en `vercel.json`, como en las demás apps de OmT: solo se ejecuta código de la propia app (nada en línea: lo que iba en `index.html` está en `boot.js`), solo se conecta a su propio servidor, no se puede incrustar en otra web (`frame-ancestors 'none'`), `nosniff`, `no-referrer` y sin permiso de cámara, micrófono ni ubicación.
 
 ## Analítica
 
