@@ -795,3 +795,14 @@ main > * {
 .info-sheet p { margin: 0; line-height: 1.45; }
 .info-sheet .sheet-title { margin: 0; }
 .info-actions { display: flex; justify-content: center; width: 100%; margin-top: 6px; }
+
+/* Ubicación y enlace */
+.loc-box { display: grid; gap: 8px; }
+.loc-btns { gap: 6px; }
+.loc-btns .chip { font-size: 13px; padding: 7px 12px; }
+.loc-linked { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--ok); }
+.loc-linked span { flex: 1; min-width: 0; }
+.text-link { padding: 4px 6px; border: 0; background: transparent; color: var(--accent); font-size: 13px; font-weight: 600; }
+.text-link.danger { color: var(--danger); }
+.link-chip { color: var(--accent); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-chip svg { flex: 0 0 auto; }

@@ -237,7 +237,7 @@ function buildNotification(slot, state, now = Date.now()) {
   const top = effLevel(tasks[0], today);
   if (tasks.length === 1) {
     const t = tasks[0];
-    return { title: `${PRIO(top).dot} ${prioName(top, tone)}`, body: t.title + (t.due ? ` — ${dueText(t.due, today)}` : ''), tag: 'taskctrl-remind', ids: [t.id] };
+    return { title: `${PRIO(top).dot} ${prioName(top, tone)}`, body: t.title + (t.due ? ` — ${dueText(t.due, today)}` : '') + (t.loc && t.loc.name ? `\n📍 ${t.loc.name}` : ''), tag: 'taskctrl-remind', ids: [t.id] };
   }
   return { title: `${PRIO(top).dot} ${tone.many(tasks.length)}`, body: list(tasks), tag: 'taskctrl-remind', ids: tasks.map((t) => t.id) };
 }

@@ -2,7 +2,7 @@
 
 *by OmT Finance*
 
-Versión **0.10.1** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
+Versión **0.11.0** (se muestra en la pantalla de inicio). Las correcciones y ajustes suben el último número (0.1.1); las novedades, el del medio (0.2.0).
 
 App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prioridad, ordenadas por prioridad, con un tic de «hecha» y avisos que se repiten más a menudo cuanto más urgente es la tarea.
 
@@ -12,6 +12,7 @@ App web instalable (PWA) para apuntar tareas pendientes con fecha límite y prio
 - **Resumen**: cuántas tareas quedan, cuántas están vencidas o son para hoy, y una barra con el reparto por prioridad.
 - **Lista agrupada por prioridad** (y dentro, por fecha límite). Tocar el círculo, o deslizar la tarea a la izquierda, la marca como hecha (con «Deshacer»). Deslizando un poco queda a la vista el botón «Hecho»; deslizando más de media tarjeta se marca al soltar; tocar la tarea la abre para editarla. Las hechas quedan plegadas al final y se borran solas al mes.
 - **Nueva tarea**: texto, prioridad, fecha límite (Hoy, Mañana, El finde, En una semana u otra fecha) y notas opcionales.
+- **Ubicación y enlace** (opcionales, en el editor): la ubicación se escribe o se pega desde Google Maps o Apple Maps (en Mapas: Compartir → Copiar; luego pegar en el campo o pulsar «Pegar de Mapas»). Del enlace se sacan el nombre del sitio y, si vienen, las coordenadas; los enlaces cortos de Google (`maps.app.goo.gl`) se guardan tal cual. «Buscar en Apple Maps / Google Maps» abre la búsqueda con lo escrito. En la tarjeta, 📍 abre el sitio en Mapas (su enlace o, si solo hay nombre, una búsqueda en Apple Maps en iPhone/iPad y en Google Maps en el resto) y 🔗 abre el enlace. El aviso de una sola tarea muestra también la ubicación. No usa servicios externos: todo sale del enlace pegado.
 - **Repetir cada año** (en el editor, necesita fecha límite): al completarla no se cierra, pasa a la misma fecha del año siguiente (el 29 de febrero, al 28) y queda en la sección plegada «Programadas», sin avisar, hasta que faltan 7, 14, 30 (por defecto) o 60 días. Sirve para cumpleaños, renovaciones, impuestos…
 - **Vincular con TripCTRL** (menú ⋯): con la nube activada en las dos apps con el mismo usuario y la contraseña de TripCTRL (no se guarda; se derivan aquí sus claves y se leen sus viajes cifrados con `peer-pull` en `api/sync`), TaskCTRL crea solas las tareas de cada reserva de los viajes que no han terminado:
   - Vuelo: hacer el check-in y sacar la tarjeta de embarque, la víspera (prioridad alta).

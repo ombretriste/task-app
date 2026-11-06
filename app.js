@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.x.y; novedades: 0.x.0.
-const APP_VERSION = '0.10.1';
+const APP_VERSION = '0.11.0';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca datos de la app.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -38,6 +38,9 @@ const ICONS = {
   repeat: '<path d="M17 3l3 3-3 3"/><path d="M4 11V9a3 3 0 0 1 3-3h13"/><path d="M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 0 1-3 3H4"/>',
   chat: '<path d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 17h-8l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 5 5z"/><path d="M8 10h8M8 13h5"/>',
   plane: '<path d="M10.5 13.5L4 11l1.5-1.5 7 .5 4-4c.8-.8 2.2-.8 3 0s.8 2.2 0 3l-4 4 .5 7L14.5 21 12 14.5"/><path d="M7 17l-2 2"/>',
+  pin: '<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  paste: '<rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5V3.5h5v1"/><path d="M9 11h6M9 14.5h4"/>',
   logout: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
 };
 const icon = (name, size = 22, sw = 1.4) =>
@@ -124,6 +127,68 @@ function dueLabel(due) {
 // `upd` de cada tarea y `deleted` sirven para fusionar con la nube tarea a tarea (gana el cambio más reciente).
 // Se copia también en IndexedDB para que el service worker pueda componer los avisos.
 
+// ---------- Ubicación y enlace de una tarea ----------
+// La ubicación se escribe o se pega desde Google Maps o Apple Maps (Compartir → Copiar):
+// { name, url, lat, lng } — el nombre para mostrar y, si los hay, el enlace de Mapas o las coordenadas.
+// Sin servicios externos (la CSP solo deja conectar con la propia app): todo sale del enlace pegado.
+function cleanLoc(l) {
+  if (!l || typeof l !== 'object') return null;
+  const name = String(l.name || '').trim().slice(0, 200);
+  const url = /^https:\/\/[^\s]+$/.test(l.url || '') ? String(l.url).slice(0, 500) : '';
+  const lat = Number(l.lat), lng = Number(l.lng);
+  const hasC = l.lat !== null && l.lat !== undefined && l.lat !== '' && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  if (!name && !url && !hasC) return null;
+  return { name, url, lat: hasC ? lat : null, lng: hasC ? lng : null };
+}
+// Enlace de la tarea: se añade https:// si falta; solo http(s)
+function cleanUrl(u) {
+  let v = String(u || '').trim();
+  if (!v) return '';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) v = `https://${v}`;
+  try {
+    const x = new URL(v);
+    return /^https?:$/.test(x.protocol) && x.hostname.includes('.') ? x.href.slice(0, 1000) : '';
+  } catch (_) { return ''; }
+}
+// Lee el texto compartido por Google Maps o Apple Maps: nombre, enlace y coordenadas si vienen
+function parseMapsText(text) {
+  const raw = String(text || '').trim();
+  const m = raw.match(/https?:\/\/(?:maps\.apple(?:\.com)?|maps\.app\.goo\.gl|goo\.gl\/maps|(?:www\.)?google\.[a-z.]+\/maps|maps\.google\.[a-z.]+)[^\s]*/i);
+  if (!m) return null;
+  const url = m[0].replace(/[),.;]+$/, '').replace(/^http:/, 'https:');
+  let name = '';
+  let lat = null;
+  let lng = null;
+  try {
+    const u = new URL(url);
+    const q = u.searchParams;
+    const pair = (v) => String(v || '').match(/^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+    const c = u.pathname.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || pair(q.get('ll')) || pair(q.get('coordinate')) || pair(q.get('q')) || pair(q.get('query'));
+    if (c) { lat = Number(c[1]); lng = Number(c[2]); }
+    const place = u.pathname.match(/\/maps\/place\/([^/@]+)/);
+    const text = q.get('name') || q.get('q') || q.get('query') || '';
+    if (place) name = decodeURIComponent(place[1].replace(/\+/g, ' '));
+    else if (text && !pair(text)) name = text;
+    else if (q.get('address')) name = q.get('address');
+  } catch (_) { /* enlace raro: se queda solo con el texto */ }
+  // Al compartir, el nombre del sitio suele venir en el texto antes del enlace
+  if (!name) name = raw.replace(m[0], '').split('\n').map((x) => x.trim()).find(Boolean) || '';
+  return cleanLoc({ name, url, lat, lng });
+}
+// Dónde abrir una ubicación: su enlace de Mapas o, si no hay, una búsqueda en Apple Maps (iPhone/iPad) o Google Maps
+function mapsHref(loc, app) {
+  const where = loc.lat !== null ? `${loc.lat},${loc.lng}` : loc.name;
+  if (!app && loc.url) return loc.url;
+  if (app === 'apple' || (!app && isIOS)) {
+    return loc.lat !== null
+      ? `https://maps.apple.com/?ll=${where}&q=${encodeURIComponent(loc.name || where)}`
+      : `https://maps.apple.com/?q=${encodeURIComponent(where)}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(where)}`;
+}
+const mapsAppName = (url) => (/apple/.test(url) ? 'Apple Maps' : /goo\.?gl|google/.test(url) ? 'Google Maps' : 'Mapas');
+const urlHost = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (_) { return u; } };
+
 function cleanData(d) {
   const out = { scale: 3, tasks: [], deleted: {}, settings: { ...DEFAULT_SETTINGS }, upd: 0 };
   if (!d || typeof d !== 'object') return out;
@@ -138,6 +203,8 @@ function cleanData(d) {
       prio: oldScale ? migratePrio(t.prio) : Math.max(0, Math.min(TOP, Math.round(Number(t.prio)) || 0)),
       due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || '') ? t.due : '',
       notes: String(t.notes || ''),
+      loc: cleanLoc(t.loc),
+      url: cleanUrl(t.url),
       repeat: !!t.repeat,
       // Tareas creadas desde TripCTRL: origen, nombre del viaje y cómo se generaron
       src: t.src === 'trip' ? 'trip' : '',
@@ -269,6 +336,8 @@ function taskCard(t) {
     due && `<span class="due ${t.done ? '' : due.cls}">${icon('calendar', 13)}${esc(due.text)}</span>`,
     t.repeat && `<span class="due">${icon('repeat', 13)}Cada año</span>`,
     t.src === 'trip' && `<span class="due">${icon('plane', 13)}${esc(t.trip || 'TripCTRL')}</span>`,
+    t.loc && `<span class="due link-chip" data-map="${t.id}">${icon('pin', 13)}${esc(t.loc.name || 'Ubicación')}</span>`,
+    t.url && `<span class="due link-chip" data-url="${t.id}">${icon('link', 13)}${esc(urlHost(t.url))}</span>`,
     t.notes && `<span class="note-dot">${icon('note', 13)} ${esc(t.notes.split('\n')[0])}</span>`,
   ].filter(Boolean).join('');
   // Al deslizar la tarjeta a la izquierda aparece detrás el botón «Hecho» (o «Pendiente» si ya está hecha)
@@ -446,7 +515,8 @@ function dateShortcuts() {
 
 function openEditor(id) {
   const t = id ? data.tasks.find((x) => x.id === id) : null;
-  const draft = { title: t?.title || '', prio: t ? t.prio : 1, due: t?.due || '', notes: t?.notes || '', repeat: !!t?.repeat, lead: t?.lead || DEFAULT_LEAD };
+  const draft = { title: t?.title || '', prio: t ? t.prio : 1, due: t?.due || '', notes: t?.notes || '', repeat: !!t?.repeat, lead: t?.lead || DEFAULT_LEAD,
+    loc: t?.loc ? { ...t.loc } : null };
   const sheet = openSheet('tall', t ? 'Editar tarea' : 'Nueva tarea');
   sheet.innerHTML = `
     <div class="sheet-head">
@@ -459,7 +529,13 @@ function openEditor(id) {
     <p class="opt-label">Fecha límite</p>
     <div class="date-chips" id="ed-dates"></div>
     <div id="ed-repeat"></div>
-    <label class="fld"><span>Notas (opcional)</span><textarea id="ed-notes" rows="2" placeholder="Detalles, teléfono, dirección…">${esc(draft.notes)}</textarea></label>
+    <p class="opt-label">Ubicación</p>
+    <div class="loc-box">
+      <label class="fld"><span>Lugar o dirección (opcional)</span><input id="ed-loc" type="text" autocomplete="off" maxlength="200" placeholder="Escríbelo o pega un enlace de Mapas" value="${esc(draft.loc?.name || '')}" /></label>
+      <div id="ed-loc-extra"></div>
+    </div>
+    <label class="fld"><span>Enlace (opcional)</span><input id="ed-url" type="url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="1000" placeholder="https://…" value="${esc(t?.url || '')}" /></label>
+    <label class="fld"><span>Notas (opcional)</span><textarea id="ed-notes" rows="2" placeholder="Detalles, teléfono…">${esc(draft.notes)}</textarea></label>
     <div class="editor-actions">
       ${t ? `<button type="button" class="ghost-btn danger" id="ed-delete">${icon('trash', 18)} Eliminar</button>` : '<span></span>'}
       <button type="button" class="done-btn" id="ed-save">${icon('check', 18, 2)} ${t ? 'Guardar' : 'Añadir'}</button>
@@ -498,6 +574,43 @@ function openEditor(id) {
         </div>
         <p class="muted small">de antelación. Hasta entonces queda en «Programadas» y no avisa.</p>` : ''}`;
   };
+  // Ubicación: pegar de Mapas, buscar en Mapas o abrir la guardada
+  const locEl = sheet.querySelector('#ed-loc');
+  const drawLoc = () => {
+    const l = draft.loc;
+    const linked = l && (l.url || l.lat !== null);
+    sheet.querySelector('#ed-loc-extra').innerHTML = `
+      ${linked ? `<p class="loc-linked">${icon('pin', 15)}<span>${l.url ? `Enlace de ${mapsAppName(l.url)}` : 'Coordenadas'} guardado</span>
+        <button type="button" class="text-link" data-open-loc>Abrir</button><button type="button" class="text-link danger" data-unlink-loc>Quitar</button></p>` : ''}
+      <div class="row-btns loc-btns">
+        <button type="button" class="chip" data-paste-loc>${icon('paste', 15)} Pegar de Mapas</button>
+        <button type="button" class="chip" data-find-loc="apple">Buscar en Apple Maps</button>
+        <button type="button" class="chip" data-find-loc="google">Buscar en Google Maps</button>
+      </div>
+      ${linked ? '' : '<p class="muted small">En Google Maps o Apple Maps abre el sitio, pulsa Compartir → Copiar y pégalo aquí.</p>'}`;
+  };
+  const applyMaps = (text) => {
+    const found = parseMapsText(text);
+    if (!found) return false;
+    // Si el enlace no trae nombre (los cortos de Google Maps), se queda el que hubiera escrito
+    draft.loc = { ...found, name: found.name || locEl.value.trim() };
+    locEl.value = draft.loc.name;
+    drawLoc();
+    toast(draft.loc.name ? `Ubicación: ${draft.loc.name}` : `Enlace de ${mapsAppName(found.url)} guardado: ponle un nombre`);
+    if (!draft.loc.name) locEl.focus();
+    return true;
+  };
+  locEl.addEventListener('paste', (e) => {
+    const text = e.clipboardData?.getData('text') || '';
+    if (parseMapsText(text)) { e.preventDefault(); applyMaps(text); }
+  });
+  locEl.addEventListener('input', () => {
+    // Pegado sin evento (algunos teclados): se reconoce el enlace igualmente
+    if (parseMapsText(locEl.value)) return void applyMaps(locEl.value);
+    if (draft.loc) draft.loc.name = locEl.value.trim();
+  });
+  drawLoc();
+
   drawPrio();
   drawDates();
 
@@ -517,6 +630,20 @@ function openEditor(id) {
     if (e.target.closest('[data-repeat]')) { draft.repeat = !draft.repeat; drawRepeat(); return; }
     const l = e.target.closest('[data-lead]');
     if (l) { draft.lead = Number(l.dataset.lead); drawRepeat(); return; }
+    if (e.target.closest('[data-paste-loc]')) {
+      navigator.clipboard?.readText?.().then((text) => {
+        if (!applyMaps(text)) toast('No hay un enlace de Mapas copiado. En Mapas: Compartir → Copiar');
+      }).catch(() => toast('Mantén pulsado el campo de la ubicación y elige Pegar'));
+      return;
+    }
+    const f = e.target.closest('[data-find-loc]');
+    if (f) {
+      const name = locEl.value.trim();
+      window.open(mapsHref({ name, url: '', lat: null, lng: null }, f.dataset.findLoc), '_blank', 'noopener');
+      return;
+    }
+    if (e.target.closest('[data-open-loc]')) return void window.open(mapsHref(draft.loc), '_blank', 'noopener');
+    if (e.target.closest('[data-unlink-loc]')) { draft.loc = { ...draft.loc, url: '', lat: null, lng: null }; drawLoc(); return; }
     if (e.target.closest('[data-close]')) closeSheet();
   });
   saveBtn.addEventListener('click', () => {
@@ -524,7 +651,12 @@ function openEditor(id) {
     if (!title) return;
     if (draft.repeat && !draft.due) { toast('Ponle una fecha límite para que se repita cada año'); return; }
     const notes = sheet.querySelector('#ed-notes').value.trim();
-    const fields = { title, prio: draft.prio, due: draft.due, notes, repeat: draft.repeat, lead: draft.lead };
+    const rawUrl = sheet.querySelector('#ed-url').value.trim();
+    const url = cleanUrl(rawUrl);
+    if (rawUrl && !url) { toast('El enlace no es válido'); return; }
+    const locName = locEl.value.trim();
+    const loc = cleanLoc(draft.loc ? { ...draft.loc, name: locName } : { name: locName });
+    const fields = { title, prio: draft.prio, due: draft.due, notes, loc, url, repeat: draft.repeat, lead: draft.lead };
     let task = t;
     if (t) Object.assign(t, fields);
     else data.tasks.push(task = { id: uid(), ...fields, done: false, doneAt: 0, created: Date.now() });
@@ -1402,6 +1534,18 @@ document.querySelector('main').addEventListener('click', (e) => {
   if (act) return completeBySwipe(act.parentElement);
   const check = e.target.closest('[data-check]');
   if (check) return toggleDone(check.dataset.check);
+  const map = e.target.closest('[data-map]');
+  if (map) {
+    const t = data.tasks.find((x) => x.id === map.dataset.map);
+    if (t?.loc) window.open(mapsHref(t.loc), '_blank', 'noopener');
+    return;
+  }
+  const link = e.target.closest('[data-url]');
+  if (link) {
+    const t = data.tasks.find((x) => x.id === link.dataset.url);
+    if (t?.url) window.open(t.url, '_blank', 'noopener');
+    return;
+  }
   const edit = e.target.closest('[data-edit]');
   if (edit) return openEditor(edit.dataset.edit);
   if (e.target.closest('[data-add]')) return openEditor();
